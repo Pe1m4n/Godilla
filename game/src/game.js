@@ -12,7 +12,7 @@ cx.imageSmoothingEnabled = false;
 
 const W = cv.width, H = cv.height;
 const GROUND_Y = H - 130;
-const MOUNTAIN_X = 195;          // где демоны/циклоп упираются в замок (правый край стены)
+const MOUNTAIN_X = 195;          // где демоны/циклоп упираются во врата Асгарда (правый край стены)
 const CASTLE_SINK = 6;           // на сколько пикселей опустить замок ниже линии земли
 
 // слоты заклинаний — внизу экрана по центру
@@ -235,7 +235,7 @@ function startWave(i){
 }
 
 // ── прокачка ───────────────────────────────────────────────────────
-// урон по горе с учётом скилла «Каменная кладка»
+// урон по вратам с учётом скилла «Каменная кладка»
 function mountainDmg(base){
   return Math.round(base * (1 - CFG.skills.armor.mult * sk('armor')));
 }
@@ -288,10 +288,10 @@ function openSkillChoice(){
   }
   const pool = availableSkills();
   if(pool.length === 0){
-    // всё прокачано — вместо скилла чиним гору
+    // всё прокачано — вместо скилла чиним врата
     pendingLevels--;
     hp = Math.min(100, hp + 15); hpFill.style.width = hp + '%';
-    floaties.push({x: MOUNTAIN_X, y: 200, txt: '+15 ГОРЕ', life: 1.4, col: '#2f6e3c'});
+    floaties.push({x: MOUNTAIN_X, y: 200, txt: '+15 ВРАТАМ', life: 1.4, col: '#2f6e3c'});
     if(pendingLevels > 0) openSkillChoice();
     return;
   }
@@ -765,7 +765,7 @@ function update(dt){
       bl.vy = -bl.vy * 0.3;
       bl.vx -= bl.vx * 1.2 * dt; // трение качения
     }
-    // гора и правая стена — отскок
+    // врата и правая стена — отскок
     if(bl.x < MOUNTAIN_X + 50){ bl.x = MOUNTAIN_X + 50; bl.vx = Math.abs(bl.vx)*0.5; }
     if(bl.x > W - B.r){ bl.x = W - B.r; bl.vx = -Math.abs(bl.vx)*0.5; }
     // остановился на поле — рассыпается и исчезает
@@ -791,7 +791,7 @@ function update(dt){
       if(c.step <= 0){ c.step = 0.8; shake = Math.max(shake, CFG.cyclops.shakeStep); sfx.thud(); }
       if(c.x < MOUNTAIN_X - 20){ c.state = 'pound'; c.poundT = 1; }
     } else {
-      // дошёл — крушит гору ударами
+      // дошёл — крушит врата ударами
       c.poundT -= dt;
       if(c.poundT <= 0){
         c.poundT = CFG.cyclops.poundEvery;
@@ -1231,8 +1231,10 @@ function gameOver(){
   shake = 0; // игра остановилась — гасим тряску, иначе экран дёргается на экране поражения
   lvlOverlay.classList.add('hidden');
   cv.classList.remove('grabbing');
-  ovTitle.textContent = 'Гора пала…';
-  ovText.innerHTML = 'Демоны прогрызли гору насквозь.<br>Но сколько луж ты после себя оставил!';
+  ovTitle.textContent = 'Врата пали…';
+  ovText.innerHTML = 'Демоны ворвались в Асгард прямо посреди пира.<br>' +
+    'Один разочарованно отставил кубок: к его столу ты пока не готов.<br>' +
+    'Но сколько луж ты после себя оставил!';
   ovScore.textContent = 'Очки: ' + score;
   ovScore.classList.remove('hidden');
   startBtn.textContent = 'Ещё раз';

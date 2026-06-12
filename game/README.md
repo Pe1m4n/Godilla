@@ -1,4 +1,4 @@
-# Godilla — «Штурм горы»
+# Godilla — «Врата Асгарда»
 
 Веб-игра (HTML5 Canvas, чистый JavaScript) под itch.io. Собирается через Vite.
 
