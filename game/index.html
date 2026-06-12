@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ШТУРМ ГОРЫ — швыряй демонов!</title>
+<link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="560"></canvas>
+  <div id="hud">
+    <div>
+      <div class="pill">Раздавлено: <span id="score">0</span></div>
+      <div class="pill" style="margin-top:6px;">Волна: <span id="wave">1</span></div>
+    </div>
+    <div style="text-align:center;">
+      <div class="pill">Уровень <span id="lvl">1</span></div>
+      <div id="xpbar"><div id="xpfill"></div></div>
+    </div>
+    <div style="text-align:right;">
+      <div class="pill">Целостность горы</div>
+      <div id="hpbar"><div id="hpfill"></div></div>
+    </div>
+  </div>
+  <div id="overlay">
+    <h1 id="ov-title">Штурм горы</h1>
+    <p id="ov-text">Хватай демонов и швыряй! Здоровяков впечатывай в землю.<br>
+    Огромных не поднять вовсе — прокачай «Таран», чтобы сбивать их<br>
+    брошенными собратьями. Циклопа тоже не схватить: кидай демонов<br>
+    ему прямо в глаз — это его единственное слабое место!</p>
+    <div class="bigscore hidden" id="ov-score"></div>
+    <button id="startBtn">Играть</button>
+  </div>
+  <div id="lvlOverlay" class="hidden">
+    <h1>Новый уровень!</h1>
+    <p>Выбери, что прокачать:</p>
+    <div id="skillCards"></div>
+  </div>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

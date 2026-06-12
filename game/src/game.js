@@ -1,0 +1,740 @@
+import {
+  CFG, GRAV, TYPES, SPD_LIGHT, SPD_MED, SPD_HARD,
+  PALS, CYC_PAL, CYC_PX, CYC_W, CYC_H, CYC_EYE,
+} from './config.js';
+import { SPRITES, CYC_SPRITE } from './sprites.js';
+import { sfx } from './audio.js';
+
+const cv = document.getElementById('game');
+const cx = cv.getContext('2d');
+cx.imageSmoothingEnabled = false;
+
+const W = cv.width, H = cv.height;
+const GROUND_Y = H - 130;
+const MOUNTAIN_X = 150;
+
+// размер моба в пикселях экрана
+const sizeOf = d => 9 * TYPES[d.type].px;
+
+// ── состояние ──────────────────────────────────────────────────────
+let demons = [], puddles = [], particles = [], floaties = [], cyclopes = [], shockwaves = [];
+let score = 0, hp = 100;
+let waveIdx = 0, spawnQueue = [], spawnTimer = 0, betweenTimer = 0, curEvery = 1.5;
+let player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
+let pendingLevels = 0, choosing = false;
+let running = false, held = null;
+const sk = id => player.skills[id] || 0; // уровень скилла игрока
+let mouse = {x:0,y:0,px:0,py:0,vx:0,vy:0};
+let shake = 0;
+
+function rnd(a,b){ return a + Math.random()*(b-a); }
+
+function spawnDemon(type){
+  const T = TYPES[type];
+  const d = {
+    type,
+    hp: T.hp,
+    x: W - 60 + rnd(-10,10),
+    y: 0,
+    vx: 0, vy: 0,
+    speed: rnd(T.speedMin, T.speedMax) + waveIdx * CFG.waves.speedPerWave,
+    pal: (Math.random()*SPRITES[type].length)|0,
+    t: rnd(0,10),
+    state: 'walk',           // walk | held | fly | stun
+    rot: 0, rotV: 0,
+    stun: 0,
+    flash: 0,                // вспышка при уроне
+    grounded: true,          // для драг-ударов об землю
+    armed: false,            // «заряжен» броском: наносит урон, пока не коснулся земли
+    hitsLeft: 0,             // сколько мобов ещё может сшибить за этот бросок (скилл «Таран»)
+    flip: Math.random()<.5,
+  };
+  d.y = GROUND_Y - sizeOf(d);
+  demons.push(d);
+}
+
+// расчёт урона по скорости удара; down — удар направлен вниз
+function impactDamage(speed, down){
+  if (speed < SPD_LIGHT) return 0;
+  if (speed < SPD_MED)   return 1;
+  if (speed < SPD_HARD)  return 2;
+  return down ? 3 : 2;
+}
+
+function hurt(d, dmg, sp){
+  if (dmg <= 0) return;
+  d.hp -= dmg;
+  if (d.hp <= 0) { splat(d, sp); return; }
+  // живой, но получил
+  sfx.hurt();
+  d.flash = 0.25;
+  shake = Math.min(TYPES[d.type].shakeHurt, 3 + sp/200);
+  const s = sizeOf(d), px = d.x + s/2, py = d.y + s*0.8;
+  const col = PALS[d.type][d.pal].b;
+  for(let i=0;i<5+dmg*3;i++){
+    particles.push({x:px, y:py, vx:rnd(-180,180), vy:rnd(-300,-60),
+      col, life:rnd(.3,.6), size:rnd(2,4)});
+  }
+  floaties.push({x:px, y:d.y-8, txt:'-'+dmg+' ХП', life:1, col:'#c0392b'});
+}
+
+function splat(d, sp){
+  sfx.splat();
+  shake = Math.min(TYPES[d.type].shakeSplat, 6 + sp/120);
+  const pts = TYPES[d.type].score;
+  score += pts; scoreEl.textContent = score;
+  gainXP(pts);
+  const s = sizeOf(d), px = d.x + s/2, py = d.y + s/2;
+  const col = PALS[d.type][d.pal].b;
+  const big = d.type !== 'small';
+  const maxR = (d.type==='huge' ? rnd(34,46) : big ? rnd(26,38) : rnd(13,20)) + sp/70;
+  puddles.push({x:px, y:GROUND_Y, r:0, max:maxR, col, life:1});
+  for(let i=0; i < (d.type==='huge' ? 30 : big ? 22 : 12); i++){
+    particles.push({
+      x:px, y:py,
+      vx:rnd(-280,280), vy:rnd(-460,-80),
+      col, life:rnd(.4,.9), size:rnd(2, big?6:4)
+    });
+  }
+  floaties.push({x:px, y:py-24, txt: big?'ХРЯЯЯСЬ!':'хрясь!', life:1});
+  if (big) floaties.push({x:px, y:py-44, txt:'+'+pts, life:1.2, col:'#b8860b'});
+  if (held === d) { held = null; cv.classList.remove('grabbing'); }
+  demons.splice(demons.indexOf(d),1);
+}
+
+function reachMountain(d){
+  sfx.reach();
+  const dmgM = mountainDmg(TYPES[d.type].mtnDmg);
+  hp = Math.max(0, hp - dmgM);
+  hpFill.style.width = hp + '%';
+  shake = 10;
+  floaties.push({x:d.x+sizeOf(d)/2, y:d.y, txt:'-'+dmgM, life:1, col:'#c0392b'});
+  for(let i=0;i<8;i++){
+    particles.push({x:d.x, y:d.y+sizeOf(d)/2, vx:rnd(-80,180), vy:rnd(-200,-40),
+      col:'#7a4a32', life:rnd(.3,.7), size:rnd(2,4)});
+  }
+  demons.splice(demons.indexOf(d),1);
+  if (hp <= 0) gameOver();
+}
+
+function spawnCyclops(){
+  cyclopes.push({
+    x: W + 10, y: GROUND_Y - CYC_H,
+    hp: CFG.cyclops.hp, t: rnd(0,10), step: 0.8,
+    state: 'walk', poundT: 0, eyeFlash: 0,
+  });
+  floaties.push({x: W-90, y: GROUND_Y - CYC_H - 24, txt:'ЦИКЛОП!', life:1.6, col:'#c0392b'});
+}
+
+function hitCyclops(c, dmg){
+  c.hp -= dmg;
+  c.eyeFlash = 0.35;
+  sfx.hurt();
+  shake = Math.max(shake, CFG.cyclops.shakeHit);
+  floaties.push({x:c.x+CYC_EYE.x, y:c.y+CYC_EYE.y-16, txt:'-'+dmg+' ХП', life:1, col:'#c0392b'});
+  if(c.hp <= 0){
+    sfx.splat(); shake = CFG.cyclops.shakeDeath;
+    score += CFG.cyclops.score; scoreEl.textContent = score;
+    gainXP(CFG.cyclops.score);
+    const px = c.x + CYC_W/2;
+    puddles.push({x:px, y:GROUND_Y, r:0, max:rnd(55,70), col:CYC_PAL.b, life:1.4});
+    for(let i=0;i<40;i++){
+      particles.push({x:px+rnd(-CYC_W/3,CYC_W/3), y:c.y+rnd(0,CYC_H), vx:rnd(-320,320), vy:rnd(-500,-60),
+        col:CYC_PAL.b, life:rnd(.5,1.1), size:rnd(3,7)});
+    }
+    floaties.push({x:px, y:c.y, txt:'ХРЯЯЯСЬ!!!', life:1.4});
+    floaties.push({x:px, y:c.y+26, txt:'+'+CFG.cyclops.score, life:1.5, col:'#b8860b'});
+    cyclopes.splice(cyclopes.indexOf(c),1);
+  }
+}
+
+// ── волны ──────────────────────────────────────────────────────────
+function startWave(i){
+  waveIdx = i;
+  const list = CFG.waves.list;
+  const w = list[Math.min(i, list.length - 1)];
+  const loops = Math.max(0, i - (list.length - 1)); // сколько раз зациклили последнюю
+  curEvery = Math.max(CFG.waves.minEvery, w.every * Math.pow(CFG.waves.loopSpeedup, loops));
+  spawnQueue = w.order.slice();
+  spawnTimer = 0.6;
+  waveEl.textContent = i + 1;
+}
+
+// ── прокачка ───────────────────────────────────────────────────────
+// урон по горе с учётом скилла «Каменная кладка»
+function mountainDmg(base){
+  return Math.round(base * (1 - CFG.skills.armor.mult * sk('armor')));
+}
+
+// взрывная волна от падения брошенного демона (скилл shockwave)
+function spawnShockwave(x, y, src){
+  const r = CFG.skills.shockwave.radius + CFG.skills.shockRadius.add * sk('shockRadius');
+  const dmg = CFG.skills.shockwave.dmg + sk('shockDmg');
+  shockwaves.push({x, y, r: 8, max: r, life: .45});
+  sfx.thud();
+  for(const o of [...demons]){
+    if(o === src || o.state === 'held' || !demons.includes(o)) continue;
+    const os = sizeOf(o);
+    if(Math.hypot(o.x + os/2 - x, o.y + os/2 - y) <= r) hurt(o, dmg, 450);
+  }
+}
+
+function updateXPBar(){
+  lvlEl.textContent = player.level;
+  xpFill.style.width = Math.min(100, 100 * player.xp / player.xpNeed) + '%';
+}
+
+function gainXP(n){
+  player.xp += n;
+  while(player.xp >= player.xpNeed){
+    player.xp -= player.xpNeed;
+    player.level++;
+    player.xpNeed = Math.round(player.xpNeed * CFG.leveling.growth);
+    pendingLevels++;
+  }
+  updateXPBar();
+  if(pendingLevels > 0 && !choosing && running) openSkillChoice();
+}
+
+// скиллы, доступные к выпадению: не на максимуме и с выполненными требованиями
+function availableSkills(){
+  return Object.entries(CFG.skills)
+    .filter(([id, sd]) => sk(id) < sd.max && (!sd.requires || sk(sd.requires) > 0))
+    .map(([id, sd]) => ({id, ...sd}));
+}
+
+function openSkillChoice(){
+  shake = 0; // игра замирает — тряска камеры тоже
+  // аккуратно выпускаем демона из руки
+  if(held){
+    held.state = 'fly'; held.vx = held.vy = 0;
+    held.armed = false; held.noDmg = true;
+    held = null; cv.classList.remove('grabbing');
+  }
+  const pool = availableSkills();
+  if(pool.length === 0){
+    // всё прокачано — вместо скилла чиним гору
+    pendingLevels--;
+    hp = Math.min(100, hp + 15); hpFill.style.width = hp + '%';
+    floaties.push({x: MOUNTAIN_X, y: 200, txt: '+15 ГОРЕ', life: 1.4, col: '#2f6e3c'});
+    if(pendingLevels > 0) openSkillChoice();
+    return;
+  }
+  choosing = true;
+  const offer = pool.sort(() => Math.random() - .5).slice(0, 3);
+  skillCards.innerHTML = '';
+  for(const s of offer){
+    const btn = document.createElement('button');
+    btn.className = 'skill-card';
+    btn.innerHTML = '<b>' + s.name + '</b>' + s.desc +
+      '<div class="lvl-tag">уровень ' + (sk(s.id)+1) + '/' + s.max + '</div>';
+    btn.addEventListener('click', () => pickSkill(s.id));
+    skillCards.appendChild(btn);
+  }
+  lvlOverlay.classList.remove('hidden');
+}
+
+function pickSkill(id){
+  player.skills[id] = sk(id) + 1;
+  pendingLevels--;
+  lvlOverlay.classList.add('hidden');
+  if(pendingLevels > 0){ openSkillChoice(); return; }
+  choosing = false;
+  // сбрасываем скорость мыши, чтобы после паузы не было фантомного рывка
+  mouse.px = mouse.x; mouse.py = mouse.y; mouse.vx = mouse.vy = 0;
+}
+
+// ── управление ─────────────────────────────────────────────────────
+function ptr(e){
+  const r = cv.getBoundingClientRect();
+  const t = e.touches ? e.touches[0] : e;
+  return { x:(t.clientX-r.left)*(W/r.width), y:(t.clientY-r.top)*(H/r.height) };
+}
+function onDown(e){
+  if(!running) return;
+  const p = ptr(e);
+  mouse.x = mouse.px = p.x; mouse.y = mouse.py = p.y;
+  mouse.vx = mouse.vy = 0;
+  let best=null, bd=1e9;
+  for(const d of demons){
+    if(d.state==='held' || TYPES[d.type].liftable === false) continue;
+    const s = sizeOf(d);
+    const dist = Math.hypot(p.x-(d.x+s/2), p.y-(d.y+s/2));
+    const gr = TYPES[d.type].grabR * (1 + CFG.skills.grip.mult * sk('grip'));
+    if(dist < gr && dist < bd){ best=d; bd=dist; }
+  }
+  if(best){
+    held = best; best.state='held'; best.rotV = 0;
+    best.grounded = false; best.noDmg = false;
+    cv.classList.add('grabbing');
+    sfx.grab();
+    e.preventDefault();
+  } else {
+    // ткнули в неподъёмного — огромного демона или циклопа
+    let hit = false;
+    for(const d of demons){
+      if(TYPES[d.type].liftable !== false) continue;
+      const s = sizeOf(d);
+      if(p.x > d.x && p.x < d.x+s && p.y > d.y && p.y < d.y+s){ hit = true; break; }
+    }
+    if(!hit){
+      for(const c of cyclopes){
+        if(p.x > c.x && p.x < c.x+CYC_W && p.y > c.y && p.y < c.y+CYC_H){ hit = true; break; }
+      }
+    }
+    if(hit){
+      floaties.push({x:p.x, y:p.y-12, txt:'НЕ ПОДНЯТЬ!', life:1, col:'#1a1626'});
+      sfx.thud();
+    }
+  }
+}
+function onMove(e){
+  const p = ptr(e);
+  mouse.x = p.x; mouse.y = p.y;
+  if(held) e.preventDefault();
+}
+function onUp(){
+  if(held){
+    const T = TYPES[held.type];
+    held.state='fly';
+    // тяжёлых надо швырять быстрее: скорость броска гасится весом (+ скилл «Могучий замах»)
+    const tf = T.throwF * (1 + CFG.skills.strongArm.mult * sk('strongArm'));
+    held.vx = mouse.vx * tf; held.vy = mouse.vy * tf;
+    held.rotV = (Math.abs(held.vx)+Math.abs(held.vy)) * CFG.throwing.spin * (held.vx<0?-1:1) + rnd(-1,1);
+    held.grounded = false;
+    held.armed = true; // заряжен до первого касания земли
+    held.hitsLeft = sk('collide'); // без «Тарана» столкновения безвредны
+    sfx.throw();
+    held = null;
+  }
+  cv.classList.remove('grabbing');
+}
+cv.addEventListener('mousedown', onDown);
+window.addEventListener('mousemove', onMove);
+window.addEventListener('mouseup', onUp);
+cv.addEventListener('touchstart', onDown, {passive:false});
+window.addEventListener('touchmove', onMove, {passive:false});
+window.addEventListener('touchend', onUp);
+
+// ── цикл ───────────────────────────────────────────────────────────
+let last = 0;
+function loop(ts){
+  const dt = Math.min(.033, (ts-last)/1000 || .016);
+  last = ts;
+  if(running && !choosing) update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function update(dt){
+  // скорость курсора (сглаженная) — для бросков и ударов об землю
+  mouse.vx = mouse.vx*0.55 + ((mouse.x-mouse.px)/dt)*0.45*0.9;
+  mouse.vy = mouse.vy*0.55 + ((mouse.y-mouse.py)/dt)*0.45*0.9;
+  mouse.px = mouse.x; mouse.py = mouse.y;
+
+  // спавн по очереди текущей волны (см. CFG.waves)
+  if(spawnQueue.length){
+    spawnTimer -= dt;
+    if(spawnTimer <= 0){
+      const t = spawnQueue.shift();
+      t === 'cyclops' ? spawnCyclops() : spawnDemon(t);
+      spawnTimer = curEvery * rnd(.85, 1.15);
+    }
+  } else {
+    betweenTimer += dt;
+    if(betweenTimer >= CFG.waves.pauseBetween){
+      betweenTimer = 0;
+      startWave(waveIdx + 1);
+    }
+  }
+
+  for(const d of [...demons]){
+    if(!demons.includes(d)) continue;
+    d.t += dt;
+    if(d.flash > 0) d.flash -= dt;
+    const s = sizeOf(d);
+
+    if(d.state === 'walk'){
+      d.x -= d.speed * dt;
+      const hop = d.type==='big' ? 4 : 7;
+      d.y = GROUND_Y - s - Math.abs(Math.sin(d.t*(d.type==='big'?5:7))) * hop;
+      d.rot = Math.sin(d.t*7) * (d.type==='big' ? 0.1 : 0.18);
+      if(d.x < MOUNTAIN_X) reachMountain(d);
+    }
+    else if(d.state === 'held'){
+      const T = TYPES[d.type];
+      // тянемся к курсору (тяжёлые — медленнее, отстают)
+      const tx = mouse.x - s/2, ty = mouse.y - s/2;
+      d.x += (tx - d.x) * Math.min(1, dt*T.follow);
+      d.y += (ty - d.y) * Math.min(1, dt*T.follow);
+      d.rot = Math.sin(d.t*14) * 0.45;
+
+      // ── упор в землю: не проваливается, а стукается ──
+      const floor = GROUND_Y - s;
+      if(d.y >= floor){
+        d.y = floor;
+        if(!d.grounded){
+          // момент контакта — считаем скорость удара по курсору
+          d.grounded = true;
+          const sp = Math.hypot(mouse.vx, mouse.vy);
+          const down = mouse.vy > Math.abs(mouse.vx)*0.5; // удар в основном вниз
+          const dmg = impactDamage(sp, down);
+          if(dmg > 0){
+            hurt(d, dmg, sp);
+          } else {
+            sfx.thud();
+          }
+        }
+        // лёгкое "вдавливание" — сплющивается
+        d.rot = 0;
+      } else if (d.y < floor - 10){
+        d.grounded = false; // оторвали от земли — можно бить снова
+      }
+      // в стены тоже упирается
+      d.x = Math.max(4, Math.min(W-s-4, d.x));
+    }
+    else if(d.state === 'fly'){
+      d.vy += GRAV * dt;
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      d.rot += d.rotV * dt * 4;
+      if(d.x < 4){ d.x = 4; d.vx = Math.abs(d.vx)*.6; }
+      if(d.x > W-s-4){ d.x = W-s-4; d.vx = -Math.abs(d.vx)*.6; }
+      if(d.y < 4){ d.y = 4; d.vy = Math.abs(d.vy)*.4; }
+
+      // ── столкновения с другими демонами: взаимный урон ──
+      // открывается скиллом «Таран»; урон наносит только «заряженный» демон —
+      // брошенный, не коснувшийся земли и с запасом жертв (hitsLeft)
+      let spNow = Math.hypot(d.vx, d.vy);
+      if(d.armed && d.hitsLeft > 0 && spNow >= SPD_LIGHT){
+        for(const o of [...demons]){
+          if(!demons.includes(d)) break;
+          if(o===d || !demons.includes(o) || o.state==='held' || o.flash>0) continue;
+          const os = sizeOf(o);
+          const rel = o.state==='fly' ? Math.hypot(d.vx-o.vx, d.vy-o.vy) : spNow;
+          if(rel < SPD_LIGHT) continue;
+          const dist = Math.hypot((d.x+s/2)-(o.x+os/2), (d.y+s/2)-(o.y+os/2));
+          if(dist > (s+os)*0.38) continue;
+          const dmgOut  = impactDamage(rel, true) + sk('throwDmg');
+          // ответный урон не больше макс. ХП жертвы: мелкий вернёт максимум 1
+          const dmgBack = Math.min(TYPES[o.type].hp, dmgOut);
+          hurt(o, dmgOut, rel);
+          if(demons.includes(o)){ // жертва выжила — отлетает (но сама уже не «заряжена»)
+            o.state='fly'; o.vx = d.vx*0.7; o.vy = -170;
+            o.rotV = rnd(-4,4); o.grounded = false; o.armed = false; o.hitsLeft = 0;
+          }
+          hurt(d, dmgBack, rel);
+          d.vx *= 0.55; d.vy *= 0.55;
+          spNow = Math.hypot(d.vx, d.vy);
+          d.hitsLeft--;
+          if(d.hitsLeft <= 0) break;
+        }
+        if(!demons.includes(d)) continue;
+      }
+
+      // ── попадание в циклопа ──
+      for(const c of cyclopes){
+        if(d.x+s < c.x+CYC_PX || d.x > c.x+CYC_W-CYC_PX || d.y+s < c.y || d.y > c.y+CYC_H) continue;
+        const sp3 = Math.hypot(d.vx, d.vy);
+        const dEye = Math.hypot(d.x+s/2-(c.x+CYC_EYE.x), d.y+s/2-(c.y+CYC_EYE.y));
+        if(d.armed && dEye < CYC_EYE.r + s*0.3 && sp3 >= SPD_LIGHT){
+          // урон в глаз: текущее ХП моба × скорость, потолок — макс. ХП моба (+ прокачка броска)
+          const cap = TYPES[d.type].hp + sk('throwDmg');
+          const dmg = Math.max(1, Math.min(cap, Math.round(d.hp * sp3 / CFG.cyclops.eyeDmgDiv) + sk('throwDmg')));
+          hitCyclops(c, dmg);
+          splat(d, sp3); // сам моб разбивается о глаз
+        } else {
+          // корпус — демон просто отскакивает, урона нет
+          const fromLeft = d.x+s/2 < c.x+CYC_W/2;
+          d.x = fromLeft ? c.x - s + CYC_PX : c.x + CYC_W - CYC_PX;
+          d.vx = (fromLeft ? -1 : 1) * Math.max(120, Math.abs(d.vx)*0.45);
+          d.vy = Math.min(d.vy, -100);
+          sfx.thud();
+        }
+        break;
+      }
+      if(!demons.includes(d)) continue;
+
+      if(d.y + s >= GROUND_Y){
+        d.y = GROUND_Y - s;
+        if(d.noDmg){
+          // вывалился из рук — падение без урона
+          d.noDmg = false;
+          sfx.thud();
+          d.state='stun'; d.stun = .5; d.vx=d.vy=0; d.rot = 0;
+          continue;
+        }
+        const sp = Math.hypot(d.vx, d.vy);
+        const down = d.vy > Math.abs(d.vx)*0.5;
+        // урон от пола только при первом касании за бросок; дальше — разряжен
+        const wasArmed = d.armed;
+        const dmg = wasArmed ? impactDamage(sp, down) : 0;
+        d.armed = false;
+        d.rotV *= CFG.throwing.spinFloorDamp; // об пол вращение гасится
+        if(wasArmed && sk('shockwave') > 0 && sp >= SPD_LIGHT){
+          spawnShockwave(d.x + s/2, GROUND_Y, d);
+        }
+        if(dmg > 0){
+          hurt(d, dmg, sp);
+          if(!demons.includes(d)) continue; // разбился
+        }
+        // выжил: отскок или стан
+        if(Math.abs(d.vy) > 160){
+          d.vy = -d.vy*0.45; d.vx *= .7;
+          if(dmg===0) sfx.thud();
+        } else {
+          d.state='stun'; d.stun = .8 + (TYPES[d.type].hp - d.hp)*0.2;
+          d.vx=d.vy=0; d.rot = 0;
+        }
+      }
+    }
+    else if(d.state === 'stun'){
+      d.stun -= dt;
+      d.rot = Math.sin(d.t*30)*.1;
+      if(d.stun<=0){ d.state='walk'; }
+    }
+  }
+
+  // ── циклопы ──
+  for(const c of [...cyclopes]){
+    c.t += dt;
+    if(c.eyeFlash > 0) c.eyeFlash -= dt;
+    if(c.state === 'walk'){
+      c.x -= CFG.cyclops.speed * dt;
+      c.step -= dt;
+      if(c.step <= 0){ c.step = 0.8; shake = Math.max(shake, CFG.cyclops.shakeStep); sfx.thud(); }
+      if(c.x < MOUNTAIN_X - 20){ c.state = 'pound'; c.poundT = 1; }
+    } else {
+      // дошёл — крушит гору ударами
+      c.poundT -= dt;
+      if(c.poundT <= 0){
+        c.poundT = CFG.cyclops.poundEvery;
+        const pd = mountainDmg(CFG.cyclops.mtnDmg);
+        hp = Math.max(0, hp - pd);
+        hpFill.style.width = hp + '%';
+        shake = CFG.cyclops.shakePound; sfx.reach();
+        floaties.push({x:MOUNTAIN_X+40, y:GROUND_Y-170, txt:'-'+pd, life:1.2, col:'#c0392b'});
+        for(let i=0;i<14;i++){
+          particles.push({x:MOUNTAIN_X+rnd(-30,60), y:rnd(180,GROUND_Y-40), vx:rnd(-60,220), vy:rnd(-220,-40),
+            col:'#7a4a32', life:rnd(.4,.9), size:rnd(2,5)});
+        }
+        if(hp <= 0){ gameOver(); return; }
+      }
+    }
+  }
+
+  for(const p of [...particles]){
+    p.vy += GRAV*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt;
+    if(p.y > GROUND_Y) { p.y = GROUND_Y; p.vy = 0; p.vx *= .8; }
+    if(p.life<=0) particles.splice(particles.indexOf(p),1);
+  }
+  for(const wv of [...shockwaves]){
+    wv.r += (wv.max - wv.r) * Math.min(1, dt*10);
+    wv.life -= dt;
+    if(wv.life <= 0) shockwaves.splice(shockwaves.indexOf(wv),1);
+  }
+  for(const pl of [...puddles]){
+    if(pl.r < pl.max) pl.r += dt*60;
+    pl.life -= dt*0.012;
+    if(pl.life<=0) puddles.splice(puddles.indexOf(pl),1);
+  }
+  for(const f of [...floaties]){
+    f.y -= 40*dt; f.life -= dt*1.2;
+    if(f.life<=0) floaties.splice(floaties.indexOf(f),1);
+  }
+  if(shake>0) shake = Math.max(0, shake - dt*40);
+}
+
+// ── отрисовка ──────────────────────────────────────────────────────
+function draw(){
+  cx.save();
+  if(shake>0) cx.translate(rnd(-shake,shake), rnd(-shake,shake));
+
+  cx.fillStyle = '#dfe1f4'; cx.fillRect(-20,-20,W+40,H+40);
+  cx.strokeStyle = 'rgba(26,22,38,.25)'; cx.lineWidth = 2;
+  drawCloud(430, 90); drawCloud(700, 140); drawCloud(260, 170);
+
+  cx.fillStyle = '#2e8b8b'; cx.fillRect(-20, GROUND_Y, W+40, H-GROUND_Y+20);
+  cx.fillStyle = 'rgba(0,0,0,.12)'; cx.fillRect(-20, GROUND_Y, W+40, 5);
+
+  for(const pl of puddles){
+    cx.globalAlpha = Math.min(1, pl.life)*0.9;
+    cx.fillStyle = pl.col;
+    cx.beginPath();
+    cx.ellipse(pl.x, pl.y+3, pl.r, pl.r*0.32, 0, 0, Math.PI*2);
+    cx.fill();
+    cx.globalAlpha = Math.min(1, pl.life)*0.5;
+    cx.beginPath();
+    cx.ellipse(pl.x+pl.r*.5, pl.y+2, pl.r*.35, pl.r*.12, 0, 0, Math.PI*2);
+    cx.fill();
+    cx.globalAlpha = 1;
+  }
+
+  for(const wv of shockwaves){
+    cx.globalAlpha = Math.max(0, Math.min(1, wv.life*2.5));
+    cx.strokeStyle = '#fffdf5';
+    cx.lineWidth = 3;
+    cx.beginPath();
+    cx.ellipse(wv.x, wv.y+2, wv.r, wv.r*0.3, 0, 0, Math.PI*2);
+    cx.stroke();
+    cx.globalAlpha = 1;
+  }
+
+  drawMountain();
+
+  for(const c of cyclopes){
+    // тень
+    cx.globalAlpha = .25; cx.fillStyle = '#000';
+    cx.beginPath();
+    cx.ellipse(c.x+CYC_W/2, GROUND_Y+3, CYC_W*0.45, 6, 0, 0, Math.PI*2);
+    cx.fill();
+    cx.globalAlpha = 1;
+    const bob = c.state==='walk' ? Math.abs(Math.sin(c.t*2.5))*4 : 0;
+    const lean = c.state==='pound' ? Math.sin(c.poundT*Math.PI)*-0.07 : Math.sin(c.t*2.5)*0.02;
+    cx.save();
+    cx.translate(c.x+CYC_W/2, c.y+CYC_H/2 - bob);
+    cx.rotate(lean);
+    cx.drawImage(CYC_SPRITE, -CYC_W/2, -CYC_H/2, CYC_W, CYC_H);
+    // вспышка в глазу при попадании
+    if(c.eyeFlash > 0){
+      cx.globalAlpha = Math.min(1, c.eyeFlash*4)*0.8;
+      cx.fillStyle = '#ff4040';
+      cx.beginPath();
+      cx.arc(CYC_EYE.x - CYC_W/2, CYC_EYE.y - CYC_H/2, CYC_EYE.r, 0, Math.PI*2);
+      cx.fill();
+      cx.globalAlpha = 1;
+    }
+    cx.restore();
+    // полоска ХП
+    cx.fillStyle = 'rgba(26,22,38,.8)';
+    cx.fillRect(c.x, c.y-16, CYC_W, 7);
+    cx.fillStyle = '#c0392b';
+    cx.fillRect(c.x+1, c.y-15, (CYC_W-2)*Math.max(0, c.hp/CFG.cyclops.hp), 5);
+  }
+
+  for(const d of demons){
+    const s = sizeOf(d);
+    // тень
+    if(d.state!=='fly' || d.y+s > GROUND_Y-120){
+      const sh = Math.max(.15, 1-(GROUND_Y-(d.y+s))/180);
+      cx.globalAlpha = .25*sh;
+      cx.fillStyle = '#000';
+      cx.beginPath();
+      cx.ellipse(d.x+s/2, GROUND_Y+2, (s*0.4+4)*sh, 4*sh, 0,0,Math.PI*2);
+      cx.fill();
+      cx.globalAlpha = 1;
+    }
+    cx.save();
+    cx.translate(d.x + s/2, d.y + s/2);
+    cx.rotate(d.rot);
+    if(d.flip) cx.scale(-1,1);
+    cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s);
+    // вспышка при уроне
+    if(d.flash > 0){
+      cx.globalAlpha = Math.min(1, d.flash*5)*0.7;
+      cx.globalCompositeOperation = 'lighter';
+      cx.fillStyle = '#fff';
+      cx.fillRect(-s/2, -s/2, s, s);
+      cx.globalCompositeOperation = 'source-over';
+      cx.globalAlpha = 1;
+    }
+    cx.restore();
+    // полоска ХП здоровяка — показываем только если он уже ранен
+    if(d.type==='big' && d.hp < TYPES.big.hp){
+      const bw = s, bh = 4;
+      cx.fillStyle = 'rgba(26,22,38,.8)';
+      cx.fillRect(d.x, d.y-9, bw, bh);
+      cx.fillStyle = '#c0392b';
+      cx.fillRect(d.x+1, d.y-8, (bw-2)*(d.hp/TYPES.big.hp), bh-2);
+    }
+    if(d.state==='stun'){
+      cx.fillStyle='#ffd76a'; cx.font='10px monospace';
+      cx.fillText('✶', d.x+s/2-14, d.y-4);
+      cx.fillText('✶', d.x+s/2+8, d.y-8);
+    }
+  }
+
+  for(const p of particles){
+    cx.globalAlpha = Math.min(1,p.life*2);
+    cx.fillStyle = p.col;
+    cx.fillRect(p.x, p.y, p.size, p.size);
+    cx.globalAlpha = 1;
+  }
+
+  cx.font = 'bold 16px monospace'; cx.textAlign='center';
+  for(const f of floaties){
+    cx.globalAlpha = Math.max(0,f.life);
+    cx.fillStyle = f.col || '#1a1626';
+    cx.fillText(f.txt, f.x, f.y);
+    cx.globalAlpha = 1;
+  }
+  cx.textAlign='left';
+
+  cx.restore();
+}
+
+function drawCloud(x,y){
+  cx.beginPath();
+  cx.moveTo(x,y);
+  cx.bezierCurveTo(x+15,y-18, x+45,y-14, x+55,y);
+  cx.bezierCurveTo(x+75,y-8, x+90,y+4, x+70,y+8);
+  cx.bezierCurveTo(x+40,y+14, x+5,y+10, x,y);
+  cx.stroke();
+}
+
+function drawMountain(){
+  cx.fillStyle = '#7a4a32';
+  cx.beginPath();
+  cx.moveTo(-20, GROUND_Y+10);
+  cx.lineTo(-20, 140);
+  let x=-20, y=140;
+  const steps=[[30,20],[20,30],[35,25],[20,40],[30,30],[15,45],[25,40],[20,50],[15,60]];
+  for(const [dx,dy] of steps){ x+=dx; cx.lineTo(x,y); y+=dy; cx.lineTo(x,y); }
+  cx.lineTo(x, GROUND_Y+10);
+  cx.closePath();
+  cx.fill();
+  cx.fillStyle='rgba(0,0,0,.15)';
+  cx.fillRect(-20,140, 40, GROUND_Y-130);
+}
+
+// ── HUD / overlay ──────────────────────────────────────────────────
+const scoreEl = document.getElementById('score');
+const waveEl = document.getElementById('wave');
+const hpFill = document.getElementById('hpfill');
+const lvlEl = document.getElementById('lvl');
+const xpFill = document.getElementById('xpfill');
+const lvlOverlay = document.getElementById('lvlOverlay');
+const skillCards = document.getElementById('skillCards');
+const overlay = document.getElementById('overlay');
+const ovTitle = document.getElementById('ov-title');
+const ovText = document.getElementById('ov-text');
+const ovScore = document.getElementById('ov-score');
+const startBtn = document.getElementById('startBtn');
+
+function start(){
+  demons=[]; puddles=[]; particles=[]; floaties=[]; cyclopes=[]; shockwaves=[];
+  score=0; hp=100; held=null; betweenTimer=0;
+  player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
+  pendingLevels = 0; choosing = false;
+  scoreEl.textContent='0'; hpFill.style.width='100%';
+  updateXPBar();
+  startWave(0);
+  overlay.classList.add('hidden');
+  lvlOverlay.classList.add('hidden');
+  running = true;
+}
+function gameOver(){
+  running = false; held = null;
+  choosing = false; pendingLevels = 0;
+  lvlOverlay.classList.add('hidden');
+  cv.classList.remove('grabbing');
+  ovTitle.textContent = 'Гора пала…';
+  ovText.innerHTML = 'Демоны прогрызли гору насквозь.<br>Но сколько луж ты после себя оставил!';
+  ovScore.textContent = 'Очки: ' + score;
+  ovScore.classList.remove('hidden');
+  startBtn.textContent = 'Ещё раз';
+  overlay.classList.remove('hidden');
+}
+startBtn.addEventListener('click', start);
+
+requestAnimationFrame(loop);
