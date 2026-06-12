@@ -72,7 +72,7 @@
       <div class="pill">Раздавлено: <span id="score">0</span></div>
       <div class="pill" style="margin-top:6px;">Волна: <span id="wave">1</span></div>
     </div>
-    <div style="text-align:center;">
+    <div style="text-align:center;" id="lvlHud">
       <div class="pill">Уровень <span id="lvl">1</span></div>
       <div id="xpbar"><div id="xpfill"></div></div>
     </div>
@@ -84,9 +84,9 @@
   <div id="overlay">
     <h1 id="ov-title">Штурм горы</h1>
     <p id="ov-text">Хватай демонов и швыряй! Здоровяков впечатывай в землю.<br>
-    Огромных не поднять вовсе — прокачай «Таран», чтобы сбивать их<br>
-    брошенными собратьями. Циклопа тоже не схватить: кидай демонов<br>
-    ему прямо в глаз — это его единственное слабое место!</p>
+    Циклопа не схватить: кидай демонов ему прямо в глаз —<br>
+    это его единственное слабое место. А внизу экрана — три<br>
+    заклинания: хватай квадратик мышкой и швыряй в гущу боя!</p>
     <div class="bigscore hidden" id="ov-score"></div>
     <button id="startBtn">Играть</button>
   </div>
@@ -164,8 +164,37 @@ const CFG = {
   // ── уровни игрока ──
   // Опыт за убийство = очки (score) монстра.
   leveling: {
+    enabled: false, // прокачка пока выключена: опыт не копится, выбора скиллов нет
     baseXP: 10,    // сколько опыта нужно до 2-го уровня
     growth: 1.35,  // во сколько раз растёт требование с каждым уровнем
+  },
+
+  // ── заклинания (3 слота внизу экрана, применяются броском) ──
+  spells: {
+    slotSize: 56,       // размер квадратика-слота
+    cancelSpeed: 150,   // отпустил медленнее — заклинание вернулось в слот
+    lightning: {
+      cd: 6,            // перезарядка, сек
+      speed: 1300,      // скорость полёта (строго по направлению броска)
+      pierceDmg: 2,     // сквозной урон всем на узкой линии полёта
+      pierceR: 16,      // полуширина этой линии
+      boomDmg: 2,       // урон взрыва в точке удара о землю
+      boomR: 75,        // радиус взрыва
+    },
+    boulder: {
+      cd: 8,
+      throwF: 0.8,      // «вес» при броске
+      gravMult: 1.8,    // тяжёлый — падает быстрее обычного
+      r: 14,            // радиус валуна
+      dmg: 2,           // урон мобу при контакте
+      eyeDmg: 3,        // урон циклопу при попадании в глаз
+      crumbleSpd: 70,   // катится медленнее — рассыпается и исчезает
+    },
+    wind: {
+      cd: 10,
+      push: 420,        // сила откидывания мобов
+      stun: 1.5,        // на сколько секунд замирают неподъёмные (huge и циклоп)
+    },
   },
 
   // ── скиллы прокачки ──
@@ -281,6 +310,55 @@ const CYC_SPRITE = bake(CYC_MAP, CYC_PAL);
 // глаз — единственное уязвимое место (центр и радиус в координатах спрайта)
 const CYC_EYE = { x: 1.5*CYC_PX, y: 6.5*CYC_PX, r: 2*CYC_PX };
 
+// ── заклинания: иконки и слоты ─────────────────────────────────────
+const SPELL_MAPS = {
+  lightning: [
+    "....ww...",
+    "...www...",
+    "..www....",
+    ".wwwww...",
+    "...www...",
+    "..www....",
+    ".www.....",
+    ".ww......",
+    "ww.......",
+  ],
+  boulder: [
+    "..bbbb...",
+    ".bBBbbb..",
+    "bBBbbbbb.",
+    "bBbbbbbb.",
+    "bbbbbbbb.",
+    "bbbbbbbb.",
+    ".bbbbbb..",
+    "..bbbb...",
+    ".........",
+  ],
+  wind: [
+    ".........",
+    ".wwwww...",
+    "......w..",
+    "wwwwwww..",
+    ".........",
+    "..wwwwww.",
+    ".......w.",
+    "...wwww..",
+    ".........",
+  ],
+};
+const SPELL_PALS = {
+  lightning: {w:'#ffd000'},
+  boulder:   {b:'#7e828c', B:'#b3b8c2'},
+  wind:      {w:'#9adfe8'},
+};
+const SPELL_SPRITES = Object.fromEntries(
+  Object.entries(SPELL_MAPS).map(([k,m]) => [k, bake(m, SPELL_PALS[k])])
+);
+const SPELL_NAMES = { lightning:'МОЛНИЯ', boulder:'ВАЛУН', wind:'ВЕТЕР' };
+const SLOT = CFG.spells.slotSize, SLOT_GAP = 16;
+const SLOT_X = (W - (SLOT*3 + SLOT_GAP*2)) / 2;
+const SLOT_Y = H - SLOT - 18;
+
 // ── звук ───────────────────────────────────────────────────────────
 let AC = null;
 function beep(freq, dur, type='square', vol=0.08){
@@ -301,10 +379,16 @@ const sfx = {
   hurt:  () => { beep(220, .1, 'sawtooth', .1); },
   reach: () => beep(110, .3, 'square', .1),
   thud:  () => beep(200, .06, 'triangle', .06),
+  zap:   () => { beep(1400, .1, 'sawtooth', .07); beep(700, .18, 'square', .06); },
+  boom:  () => { beep(120, .25, 'sawtooth', .12); beep(60, .35, 'triangle', .1); },
+  wind:  () => { beep(500, .35, 'sine', .07); beep(320, .45, 'sine', .05); },
 };
 
 // ── состояние ──────────────────────────────────────────────────────
 let demons = [], puddles = [], particles = [], floaties = [], cyclopes = [], shockwaves = [];
+let bolts = [], boulders = [], windStreaks = [];
+let spellSlots = [{id:'lightning', cd:0}, {id:'boulder', cd:0}, {id:'wind', cd:0}];
+let heldSpell = null; // заклинание в руке: {id, slot, x, y}
 let score = 0, hp = 100;
 let waveIdx = 0, spawnQueue = [], spawnTimer = 0, betweenTimer = 0, curEvery = 1.5;
 let player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
@@ -413,7 +497,7 @@ function spawnCyclops(){
   cyclopes.push({
     x: W + 10, y: GROUND_Y - CYC_H,
     hp: CFG.cyclops.hp, t: rnd(0,10), step: 0.8,
-    state: 'walk', poundT: 0, eyeFlash: 0,
+    state: 'walk', poundT: 0, eyeFlash: 0, freeze: 0,
   });
   floaties.push({x: W-90, y: GROUND_Y - CYC_H - 24, txt:'ЦИКЛОП!', life:1.6, col:'#c0392b'});
 }
@@ -477,6 +561,7 @@ function updateXPBar(){
 }
 
 function gainXP(n){
+  if(!CFG.leveling.enabled) return; // прокачка выключена
   player.xp += n;
   while(player.xp >= player.xpNeed){
     player.xp -= player.xpNeed;
@@ -496,6 +581,7 @@ function availableSkills(){
 }
 
 function openSkillChoice(){
+  shake = 0; // игра замирает — тряска камеры тоже
   // аккуратно выпускаем демона из руки
   if(held){
     held.state = 'fly'; held.vx = held.vy = 0;
@@ -535,6 +621,93 @@ function pickSkill(id){
   mouse.px = mouse.x; mouse.py = mouse.y; mouse.vx = mouse.vy = 0;
 }
 
+// ── заклинания ─────────────────────────────────────────────────────
+// индекс слота под точкой (или -1)
+function slotAt(x, y){
+  for(let i = 0; i < spellSlots.length; i++){
+    const sx = SLOT_X + i*(SLOT + SLOT_GAP);
+    if(x > sx && x < sx+SLOT && y > SLOT_Y && y < SLOT_Y+SLOT) return i;
+  }
+  return -1;
+}
+
+function castSpell(hs, vx, vy){
+  const id = hs.id;
+  if(id === 'lightning'){
+    // летит строго по направлению броска с фиксированной скоростью
+    const a = Math.atan2(vy, vx);
+    bolts.push({
+      x: hs.x, y: hs.y,
+      vx: Math.cos(a)*CFG.spells.lightning.speed,
+      vy: Math.sin(a)*CFG.spells.lightning.speed,
+      life: 3,
+    });
+    sfx.zap();
+  } else if(id === 'boulder'){
+    const B = CFG.spells.boulder;
+    boulders.push({ x: hs.x, y: hs.y, vx: vx*B.throwF, vy: vy*B.throwF, rot: 0 });
+    sfx.throw();
+  } else if(id === 'wind'){
+    castWind(vx >= 0 ? 1 : -1);
+  }
+}
+
+function castWind(dir){
+  sfx.wind();
+  shake = Math.max(shake, 4);
+  for(let i = 0; i < 26; i++){
+    windStreaks.push({
+      x: dir > 0 ? rnd(-W*0.3, W*0.6) : rnd(W*0.4, W*1.3),
+      y: rnd(40, GROUND_Y - 6),
+      spd: rnd(600, 1000)*dir, life: rnd(.35, .7),
+    });
+  }
+  for(const d of demons){
+    if(d.state === 'held') continue;
+    if(TYPES[d.type].liftable === false){
+      // неподъёмные не сдвигаются — просто замирают
+      d.state = 'stun'; d.stun = Math.max(d.stun, CFG.spells.wind.stun);
+      d.vx = d.vy = 0; d.rot = 0;
+      continue;
+    }
+    d.state = 'fly';
+    d.vx = d.vx*0.2 + CFG.spells.wind.push * dir * rnd(.7, 1.3);
+    d.vy = -rnd(60, 180);
+    d.rotV = rnd(-2, 2);
+    d.armed = false; d.hitsLeft = 0; d.noDmg = true; d.grounded = false;
+  }
+  for(const c of cyclopes){
+    c.freeze = Math.max(c.freeze, CFG.spells.wind.stun);
+    floaties.push({x:c.x+CYC_W/2, y:c.y-24, txt:'ЗАМЕР!', life:1, col:'#1a1626'});
+  }
+}
+
+// взрыв молнии в точке удара о землю
+function boltBoom(b){
+  const L = CFG.spells.lightning;
+  sfx.boom();
+  shake = Math.max(shake, 9);
+  shockwaves.push({x: b.x, y: GROUND_Y, r: 10, max: L.boomR, life: .4});
+  for(let i = 0; i < 18; i++){
+    particles.push({x:b.x, y:GROUND_Y-4, vx:rnd(-260,260), vy:rnd(-420,-60),
+      col: i%2 ? '#ffd000' : '#fffdf5', life:rnd(.3,.7), size:rnd(2,4)});
+  }
+  for(const o of [...demons]){
+    if(o.state === 'held' || !demons.includes(o)) continue;
+    const os = sizeOf(o);
+    if(Math.hypot(o.x+os/2 - b.x, o.y+os/2 - GROUND_Y) <= L.boomR) hurt(o, L.boomDmg, 600);
+  }
+}
+
+function crumbleBoulder(bl){
+  sfx.thud();
+  for(let i = 0; i < 16; i++){
+    particles.push({x:bl.x, y:bl.y, vx:rnd(-200,200), vy:rnd(-260,-20),
+      col: i%2 ? '#7e828c' : '#5d6066', life:rnd(.4,.8), size:rnd(2,5)});
+  }
+  boulders.splice(boulders.indexOf(bl), 1);
+}
+
 // ── управление ─────────────────────────────────────────────────────
 function ptr(e){
   const r = cv.getBoundingClientRect();
@@ -542,10 +715,19 @@ function ptr(e){
   return { x:(t.clientX-r.left)*(W/r.width), y:(t.clientY-r.top)*(H/r.height) };
 }
 function onDown(e){
-  if(!running) return;
+  if(!running || choosing) return;
   const p = ptr(e);
   mouse.x = mouse.px = p.x; mouse.y = mouse.py = p.y;
   mouse.vx = mouse.vy = 0;
+  // сперва слоты заклинаний
+  const si = slotAt(p.x, p.y);
+  if(si !== -1 && spellSlots[si].cd <= 0 && !held){
+    heldSpell = { id: spellSlots[si].id, slot: si, x: p.x, y: p.y };
+    cv.classList.add('grabbing');
+    sfx.grab();
+    e.preventDefault();
+    return;
+  }
   let best=null, bd=1e9;
   for(const d of demons){
     if(d.state==='held' || TYPES[d.type].liftable === false) continue;
@@ -582,9 +764,19 @@ function onDown(e){
 function onMove(e){
   const p = ptr(e);
   mouse.x = p.x; mouse.y = p.y;
-  if(held) e.preventDefault();
+  if(held || heldSpell) e.preventDefault();
 }
 function onUp(){
+  if(heldSpell){
+    const sp = Math.hypot(mouse.vx, mouse.vy);
+    if(sp >= CFG.spells.cancelSpeed){
+      castSpell(heldSpell, mouse.vx, mouse.vy);
+      spellSlots[heldSpell.slot].cd = CFG.spells[heldSpell.id].cd;
+    } // иначе — просто вернулось в слот
+    heldSpell = null;
+    cv.classList.remove('grabbing');
+    return;
+  }
   if(held){
     const T = TYPES[held.type];
     held.state='fly';
@@ -786,11 +978,95 @@ function update(dt){
     }
   }
 
+  // ── заклинания: перезарядка и предмет в руке ──
+  for(const s of spellSlots) if(s.cd > 0) s.cd -= dt;
+  if(heldSpell){
+    heldSpell.x += (mouse.x - heldSpell.x) * Math.min(1, dt*20);
+    heldSpell.y += (mouse.y - heldSpell.y) * Math.min(1, dt*20);
+  }
+
+  // ── молнии ──
+  for(const b of [...bolts]){
+    b.x += b.vx*dt; b.y += b.vy*dt; b.life -= dt;
+    // сквозной урон по узкой линии полёта
+    for(const o of [...demons]){
+      if(o.state==='held' || o.flash>0 || !demons.includes(o)) continue;
+      const os = sizeOf(o);
+      if(Math.hypot(o.x+os/2 - b.x, o.y+os/2 - b.y) < CFG.spells.lightning.pierceR + os*0.4){
+        hurt(o, CFG.spells.lightning.pierceDmg, 800); // пролетает насквозь, не останавливаясь
+      }
+    }
+    // искра-след
+    particles.push({x:b.x, y:b.y, vx:rnd(-40,40), vy:rnd(-40,40),
+      col:'#ffd000', life:.2, size:2});
+    // взрыв — только при ударе о землю сверху (стартует молния из руки ниже линии земли)
+    if(b.y >= GROUND_Y && b.vy > 0){ boltBoom(b); bolts.splice(bolts.indexOf(b),1); continue; }
+    if(b.x < -40 || b.x > W+40 || b.y < -40 || b.y > H+40 || b.life <= 0) bolts.splice(bolts.indexOf(b),1);
+  }
+
+  // ── валуны ──
+  const B = CFG.spells.boulder;
+  for(const bl of [...boulders]){
+    bl.vy += GRAV * B.gravMult * dt;
+    bl.x += bl.vx*dt; bl.y += bl.vy*dt;
+    bl.rot += bl.vx*dt / B.r; // катится — крутится
+    const spd = Math.hypot(bl.vx, bl.vy);
+    // сбивает мобов
+    for(const o of [...demons]){
+      if(o.state==='held' || o.flash>0 || !demons.includes(o)) continue;
+      const os = sizeOf(o);
+      if(Math.hypot(o.x+os/2 - bl.x, o.y+os/2 - bl.y) < B.r + os*0.45){
+        hurt(o, B.dmg, Math.max(spd, 400));
+        if(demons.includes(o)){ // выжил — отлетает
+          o.state='fly'; o.vx = bl.vx*0.6; o.vy = -150;
+          o.armed = false; o.hitsLeft = 0; o.grounded = false;
+        }
+      }
+    }
+    // циклоп: в глаз — урон, в корпус — отскок
+    let gone = false;
+    for(const c of cyclopes){
+      if(bl.x+B.r < c.x+CYC_PX || bl.x-B.r > c.x+CYC_W-CYC_PX || bl.y+B.r < c.y || bl.y-B.r > c.y+CYC_H) continue;
+      const dEye = Math.hypot(bl.x-(c.x+CYC_EYE.x), bl.y-(c.y+CYC_EYE.y));
+      if(dEye < CYC_EYE.r + B.r){
+        hitCyclops(c, B.eyeDmg);
+        crumbleBoulder(bl); gone = true;
+      } else {
+        bl.x = bl.x < c.x+CYC_W/2 ? c.x - B.r : c.x + CYC_W + B.r;
+        bl.vx = -bl.vx*0.5;
+        sfx.thud();
+      }
+      break;
+    }
+    if(gone) continue;
+    // земля: отскок и качение (только при падении — из руки валун стартует ниже линии земли)
+    if(bl.y + B.r >= GROUND_Y && bl.vy >= 0){
+      bl.y = GROUND_Y - B.r;
+      if(bl.vy > 140){ sfx.thud(); shake = Math.max(shake, 3); }
+      bl.vy = -bl.vy * 0.3;
+      bl.vx -= bl.vx * 1.2 * dt; // трение качения
+    }
+    // гора и правая стена — отскок
+    if(bl.x < MOUNTAIN_X + 50){ bl.x = MOUNTAIN_X + 50; bl.vx = Math.abs(bl.vx)*0.5; }
+    if(bl.x > W - B.r){ bl.x = W - B.r; bl.vx = -Math.abs(bl.vx)*0.5; }
+    // остановился на поле — рассыпается и исчезает
+    if(bl.y + B.r >= GROUND_Y - 2 && Math.abs(bl.vx) < B.crumbleSpd && Math.abs(bl.vy) < 60){
+      crumbleBoulder(bl);
+    }
+  }
+
+  // ── потоки ветра ──
+  for(const ws of [...windStreaks]){
+    ws.x += ws.spd*dt; ws.life -= dt;
+    if(ws.life <= 0) windStreaks.splice(windStreaks.indexOf(ws),1);
+  }
+
   // ── циклопы ──
   for(const c of [...cyclopes]){
     c.t += dt;
     if(c.eyeFlash > 0) c.eyeFlash -= dt;
-    if(c.state === 'walk'){
+    if(c.freeze > 0){ c.freeze -= dt; } // замер от порыва ветра
+    else if(c.state === 'walk'){
       c.x -= CFG.cyclops.speed * dt;
       c.step -= dt;
       if(c.step <= 0){ c.step = 0.8; shake = Math.max(shake, CFG.cyclops.shakeStep); sfx.thud(); }
@@ -901,6 +1177,13 @@ function draw(){
     cx.fillRect(c.x, c.y-16, CYC_W, 7);
     cx.fillStyle = '#c0392b';
     cx.fillRect(c.x+1, c.y-15, (CYC_W-2)*Math.max(0, c.hp/CFG.cyclops.hp), 5);
+    // замер от ветра
+    if(c.freeze > 0){
+      cx.fillStyle='#9adfe8'; cx.font='14px monospace';
+      cx.fillText('✶', c.x+CYC_W/2-16, c.y-22);
+      cx.fillText('✶', c.x+CYC_W/2+10, c.y-28);
+      cx.font='10px monospace';
+    }
   }
 
   for(const d of demons){
@@ -945,6 +1228,42 @@ function draw(){
     }
   }
 
+  // молнии — яркая черта по направлению полёта
+  for(const b of bolts){
+    const dx = b.vx*0.018, dy = b.vy*0.018;
+    cx.globalAlpha = .5;
+    cx.strokeStyle = '#fff7c0'; cx.lineWidth = 6;
+    cx.beginPath(); cx.moveTo(b.x-dx, b.y-dy); cx.lineTo(b.x, b.y); cx.stroke();
+    cx.globalAlpha = 1;
+    cx.strokeStyle = '#ffd000'; cx.lineWidth = 2.5;
+    cx.beginPath(); cx.moveTo(b.x-dx, b.y-dy); cx.lineTo(b.x, b.y); cx.stroke();
+  }
+
+  // валуны
+  for(const bl of boulders){
+    cx.globalAlpha = .25; cx.fillStyle = '#000';
+    cx.beginPath();
+    cx.ellipse(bl.x, GROUND_Y+2, CFG.spells.boulder.r*0.9, 4, 0, 0, Math.PI*2);
+    cx.fill();
+    cx.globalAlpha = 1;
+    cx.save();
+    cx.translate(bl.x, bl.y); cx.rotate(bl.rot);
+    const br = CFG.spells.boulder.r;
+    cx.drawImage(SPELL_SPRITES.boulder, -br, -br, br*2, br*2);
+    cx.restore();
+  }
+
+  // потоки ветра
+  for(const ws of windStreaks){
+    cx.globalAlpha = Math.max(0, ws.life)*0.7;
+    cx.strokeStyle = '#cdeef4'; cx.lineWidth = 2;
+    cx.beginPath();
+    cx.moveTo(ws.x, ws.y);
+    cx.lineTo(ws.x - Math.sign(ws.spd)*30, ws.y);
+    cx.stroke();
+    cx.globalAlpha = 1;
+  }
+
   for(const p of particles){
     cx.globalAlpha = Math.min(1,p.life*2);
     cx.fillStyle = p.col;
@@ -962,6 +1281,57 @@ function draw(){
   cx.textAlign='left';
 
   cx.restore();
+
+  drawSpellUI();
+}
+
+// слоты заклинаний + предмет в руке (поверх всего, без тряски камеры)
+function drawSpellUI(){
+  const tNow = last * 0.001;
+  cx.textAlign = 'center';
+  cx.font = '10px monospace';
+  cx.fillStyle = 'rgba(26,22,38,.65)';
+  cx.fillText('ЗАКЛИНАНИЯ — ХВАТАЙ И БРОСАЙ', W/2, SLOT_Y - 8);
+  spellSlots.forEach((s, i) => {
+    const x = SLOT_X + i*(SLOT + SLOT_GAP), y = SLOT_Y;
+    const ready = s.cd <= 0;
+    const inHand = heldSpell && heldSpell.slot === i;
+    const hov = ready && !inHand && !heldSpell && !held &&
+      mouse.x > x && mouse.x < x+SLOT && mouse.y > y && mouse.y < y+SLOT;
+    cx.fillStyle = hov ? 'rgba(255,253,245,.95)' : 'rgba(255,253,245,.75)';
+    cx.fillRect(x, y, SLOT, SLOT);
+    // пунктирная рамка — намёк «можно взять»
+    cx.strokeStyle = '#1a1626'; cx.lineWidth = 2;
+    cx.setLineDash([5,4]);
+    cx.strokeRect(x, y, SLOT, SLOT);
+    cx.setLineDash([]);
+    if(ready && !inHand){
+      // иконка подпрыгивает, на наведении — тянется вверх
+      const bob = Math.sin(tNow*3 + i*2)*3 - (hov ? 5 : 0);
+      cx.drawImage(SPELL_SPRITES[s.id], x+SLOT/2-18, y+SLOT/2-18+bob, 36, 36);
+    }
+    if(!ready){
+      // перезарядка: тёмная шторка + секунды
+      const hgt = SLOT * Math.min(1, s.cd / CFG.spells[s.id].cd);
+      cx.fillStyle = 'rgba(26,22,38,.45)';
+      cx.fillRect(x, y+SLOT-hgt, SLOT, hgt);
+      cx.fillStyle = '#fffdf5';
+      cx.font = 'bold 16px monospace';
+      cx.fillText(Math.ceil(s.cd), x+SLOT/2, y+SLOT/2+5);
+      cx.font = '10px monospace';
+    }
+    cx.fillStyle = '#1a1626';
+    cx.fillText(SPELL_NAMES[s.id], x+SLOT/2, y+SLOT+11);
+  });
+  // заклинание в руке — покачивается у курсора
+  if(heldSpell){
+    cx.save();
+    cx.translate(heldSpell.x, heldSpell.y);
+    cx.rotate(Math.sin(tNow*10)*0.2);
+    cx.drawImage(SPELL_SPRITES[heldSpell.id], -18, -18, 36, 36);
+    cx.restore();
+  }
+  cx.textAlign = 'left';
 }
 
 function drawCloud(x,y){
@@ -996,6 +1366,8 @@ const lvlEl = document.getElementById('lvl');
 const xpFill = document.getElementById('xpfill');
 const lvlOverlay = document.getElementById('lvlOverlay');
 const skillCards = document.getElementById('skillCards');
+const lvlHud = document.getElementById('lvlHud');
+if(!CFG.leveling.enabled) lvlHud.style.display = 'none'; // прокачка выключена — полоса опыта скрыта
 const overlay = document.getElementById('overlay');
 const ovTitle = document.getElementById('ov-title');
 const ovText = document.getElementById('ov-text');
@@ -1004,6 +1376,8 @@ const startBtn = document.getElementById('startBtn');
 
 function start(){
   demons=[]; puddles=[]; particles=[]; floaties=[]; cyclopes=[]; shockwaves=[];
+  bolts=[]; boulders=[]; windStreaks=[]; heldSpell=null;
+  for(const s of spellSlots) s.cd = 0;
   score=0; hp=100; held=null; betweenTimer=0;
   player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
   pendingLevels = 0; choosing = false;
@@ -1015,7 +1389,7 @@ function start(){
   running = true;
 }
 function gameOver(){
-  running = false; held = null;
+  running = false; held = null; heldSpell = null;
   choosing = false; pendingLevels = 0;
   lvlOverlay.classList.add('hidden');
   cv.classList.remove('grabbing');
