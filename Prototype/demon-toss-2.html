@@ -30,6 +30,23 @@
   .pill{background:rgba(255,253,245,.85);border:2px solid var(--ink);padding:4px 10px;}
   #hpbar{width:160px;height:12px;border:2px solid var(--ink);background:rgba(255,253,245,.85);margin-top:4px;}
   #hpfill{height:100%;background:var(--mountain);width:100%;transition:width .25s;}
+  #xpbar{width:220px;height:10px;border:2px solid var(--ink);background:rgba(255,253,245,.85);margin:4px auto 0;}
+  #xpfill{height:100%;background:#d4a017;width:0%;transition:width .2s;}
+  #lvlOverlay{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:rgba(26,22,38,.82);color:var(--ui);text-align:center;gap:16px;
+  }
+  #lvlOverlay h1{font-size:28px;letter-spacing:3px;text-transform:uppercase;}
+  #lvlOverlay p{color:#cfc9e6;font-size:14px;}
+  #skillCards{display:flex;gap:14px;}
+  .skill-card{
+    font-family:monospace;width:200px;min-height:130px;padding:12px;
+    background:var(--ui);color:var(--ink);border:3px solid var(--ink);
+    cursor:pointer;text-align:left;font-size:13px;line-height:1.5;
+  }
+  .skill-card:hover{background:#ffd76a;}
+  .skill-card b{display:block;font-size:14px;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;}
+  .skill-card .lvl-tag{margin-top:8px;color:#7a4a32;font-size:12px;}
   #overlay{
     position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
     background:rgba(26,22,38,.78);color:var(--ui);text-align:center;gap:18px;
@@ -55,6 +72,10 @@
       <div class="pill">Раздавлено: <span id="score">0</span></div>
       <div class="pill" style="margin-top:6px;">Волна: <span id="wave">1</span></div>
     </div>
+    <div style="text-align:center;">
+      <div class="pill">Уровень <span id="lvl">1</span></div>
+      <div id="xpbar"><div id="xpfill"></div></div>
+    </div>
     <div style="text-align:right;">
       <div class="pill">Целостность горы</div>
       <div id="hpbar"><div id="hpfill"></div></div>
@@ -62,12 +83,17 @@
   </div>
   <div id="overlay">
     <h1 id="ov-title">Штурм горы</h1>
-    <p id="ov-text">Хватай демонов и швыряй — брошенные сшибают тех, в кого врезаются.<br>
-    Здоровяков впечатывай в землю, а огромных высоко не поднять —<br>
-    вываливаются из рук. Когда придёт ЦИКЛОП, его не схватить:<br>
-    кидай демонов ему прямо в глаз — это его единственное слабое место!</p>
+    <p id="ov-text">Хватай демонов и швыряй! Здоровяков впечатывай в землю.<br>
+    Огромных не поднять вовсе — прокачай «Таран», чтобы сбивать их<br>
+    брошенными собратьями. Циклопа тоже не схватить: кидай демонов<br>
+    ему прямо в глаз — это его единственное слабое место!</p>
     <div class="bigscore hidden" id="ov-score"></div>
     <button id="startBtn">Играть</button>
+  </div>
+  <div id="lvlOverlay" class="hidden">
+    <h1>Новый уровень!</h1>
+    <p>Выбери, что прокачать:</p>
+    <div id="skillCards"></div>
   </div>
 </div>
 
@@ -105,14 +131,14 @@ const CFG = {
     //  score      — очки за убийство
     //  throwF     — «вес»: множитель скорости броска (меньше = тяжелее, тяни быстрее)
     //  follow     — как шустро тянется за курсором в руке
-    //  liftMax    — макс. высота подъёма над землёй (есть только у huge): выше — вываливается
+    //  liftable: false — моба нельзя поднять вообще (huge)
     //  shakeHurt / shakeSplat — потолок тряски камеры при ранении / смерти
     small: { px: 2.5, hp: 1, mtnDmg: 10, speedMin: 30, speedMax: 48, grabR: 26, score: 1,
              throwF: 1,   follow: 22, shakeHurt: 6,  shakeSplat: 10 },
     big:   { px: 4,   hp: 3, mtnDmg: 20, speedMin: 18, speedMax: 28, grabR: 36, score: 3,
              throwF: 0.7, follow: 14, shakeHurt: 10, shakeSplat: 16 },
-    huge:  { px: 6,   hp: 5, mtnDmg: 30, speedMin: 10, speedMax: 16, grabR: 50, score: 5,
-             throwF: 0.5, follow: 8,  liftMax: 36, shakeHurt: 12, shakeSplat: 20 },
+    huge:  { px: 6,   hp: 5, mtnDmg: 30, speedMin: 10, speedMax: 16, score: 5,
+             liftable: false, shakeHurt: 12, shakeSplat: 20 },
   },
 
   cyclops: {
@@ -127,6 +153,50 @@ const CFG = {
     shakeHit: 8,      //   попадание в глаз
     shakePound: 16,   //   удар по замку
     shakeDeath: 20,   //   смерть
+  },
+
+  // ── бросок ──
+  throwing: {
+    spin: 0.004,          // скорость вращения от силы броска
+    spinFloorDamp: 0.45,  // во сколько раз гаснет вращение при ударе об пол
+  },
+
+  // ── уровни игрока ──
+  // Опыт за убийство = очки (score) монстра.
+  leveling: {
+    baseXP: 10,    // сколько опыта нужно до 2-го уровня
+    growth: 1.35,  // во сколько раз растёт требование с каждым уровнем
+  },
+
+  // ── скиллы прокачки ──
+  // max — сколько раз можно взять; requires — без какого скилла не выпадает
+  skills: {
+    collide:     { name:'Таран',           desc:'Брошенный демон наносит урон тому, в кого врезался. Уровень = сколько жертв за один бросок', max:4 },
+    throwDmg:    { name:'Тяжёлая рука',    desc:'+1 урон от брошенных демонов: столкновения и глаз циклопа', max:2 },
+    strongArm:   { name:'Могучий замах',   desc:'Броски на 15% сильнее — тяжёлых кидать легче', max:3, mult:0.15 },
+    grip:        { name:'Цепкая хватка',   desc:'+30% к радиусу хватания демонов', max:2, mult:0.3 },
+    armor:       { name:'Каменная кладка', desc:'Гора получает на 15% меньше урона', max:2, mult:0.15 },
+    shockwave:   { name:'Взрывная волна',  desc:'Брошенный демон при падении бьёт волной по площади', max:1, dmg:1, radius:60 },
+    shockRadius: { name:'Широкая волна',   desc:'+35 к радиусу взрывной волны', max:3, requires:'shockwave', add:35 },
+    shockDmg:    { name:'Злая волна',      desc:'+1 урон взрывной волны', max:2, requires:'shockwave' },
+  },
+
+  // ── волны: сколько, каких мобов и в каком порядке идёт ──
+  // every — интервал между выходами (сек); order — точная очередь выхода.
+  // Когда список кончился, последняя волна повторяется по кругу,
+  // ускоряясь на loopSpeedup за каждый повтор.
+  waves: {
+    pauseBetween: 2.5,   // передышка между волнами, сек
+    speedPerWave: 3,     // прибавка скорости демонам за каждую волну
+    loopSpeedup: 0.9,    // множитель интервала за каждый повтор последней волны
+    minEvery: 0.45,      // чаще этого не спавнит
+    list: [
+      { every: 1.7, order: ['small','small','small','small','small'] },
+      { every: 1.5, order: ['small','small','big','small','small','small','big'] },
+      { every: 1.4, order: ['big','small','small','huge','small','small','big','small'] },
+      { every: 1.2, order: ['small','cyclops','small','big','small','huge','small','big'] },
+      { every: 1.0, order: ['huge','small','big','small','cyclops','small','huge','big','small','small','cyclops'] },
+    ],
   },
 };
 // ═══════════════════════════════════════════════════════
@@ -234,9 +304,13 @@ const sfx = {
 };
 
 // ── состояние ──────────────────────────────────────────────────────
-let demons = [], puddles = [], particles = [], floaties = [], cyclopes = [];
-let score = 0, hp = 100, wave = 1, spawnTimer = 0, waveTimer = 0;
+let demons = [], puddles = [], particles = [], floaties = [], cyclopes = [], shockwaves = [];
+let score = 0, hp = 100;
+let waveIdx = 0, spawnQueue = [], spawnTimer = 0, betweenTimer = 0, curEvery = 1.5;
+let player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
+let pendingLevels = 0, choosing = false;
 let running = false, held = null;
+const sk = id => player.skills[id] || 0; // уровень скилла игрока
 let mouse = {x:0,y:0,px:0,py:0,vx:0,vy:0};
 let shake = 0;
 
@@ -247,11 +321,7 @@ const SPD_HARD  = CFG.impact.hard;
 
 function rnd(a,b){ return a + Math.random()*(b-a); }
 
-function spawnDemon(){
-  const r = Math.random();
-  const hugeP = wave >= 2 ? Math.min(0.18, 0.04 + wave*0.02) : 0;
-  const bigP  = 0.25 + Math.min(0.22, wave*0.03);
-  const type = r < hugeP ? 'huge' : r < hugeP + bigP ? 'big' : 'small';
+function spawnDemon(type){
   const T = TYPES[type];
   const d = {
     type,
@@ -259,7 +329,7 @@ function spawnDemon(){
     x: W - 60 + rnd(-10,10),
     y: 0,
     vx: 0, vy: 0,
-    speed: rnd(T.speedMin, T.speedMax) + wave*3,
+    speed: rnd(T.speedMin, T.speedMax) + waveIdx * CFG.waves.speedPerWave,
     pal: (Math.random()*SPRITES[type].length)|0,
     t: rnd(0,10),
     state: 'walk',           // walk | held | fly | stun
@@ -268,6 +338,7 @@ function spawnDemon(){
     flash: 0,                // вспышка при уроне
     grounded: true,          // для драг-ударов об землю
     armed: false,            // «заряжен» броском: наносит урон, пока не коснулся земли
+    hitsLeft: 0,             // сколько мобов ещё может сшибить за этот бросок (скилл «Таран»)
     flip: Math.random()<.5,
   };
   d.y = GROUND_Y - sizeOf(d);
@@ -304,6 +375,7 @@ function splat(d, sp){
   shake = Math.min(TYPES[d.type].shakeSplat, 6 + sp/120);
   const pts = TYPES[d.type].score;
   score += pts; scoreEl.textContent = score;
+  gainXP(pts);
   const s = sizeOf(d), px = d.x + s/2, py = d.y + s/2;
   const col = PALS[d.type][d.pal].b;
   const big = d.type !== 'small';
@@ -324,7 +396,7 @@ function splat(d, sp){
 
 function reachMountain(d){
   sfx.reach();
-  const dmgM = TYPES[d.type].mtnDmg;
+  const dmgM = mountainDmg(TYPES[d.type].mtnDmg);
   hp = Math.max(0, hp - dmgM);
   hpFill.style.width = hp + '%';
   shake = 10;
@@ -355,6 +427,7 @@ function hitCyclops(c, dmg){
   if(c.hp <= 0){
     sfx.splat(); shake = CFG.cyclops.shakeDeath;
     score += CFG.cyclops.score; scoreEl.textContent = score;
+    gainXP(CFG.cyclops.score);
     const px = c.x + CYC_W/2;
     puddles.push({x:px, y:GROUND_Y, r:0, max:rnd(55,70), col:CYC_PAL.b, life:1.4});
     for(let i=0;i<40;i++){
@@ -365,6 +438,101 @@ function hitCyclops(c, dmg){
     floaties.push({x:px, y:c.y+26, txt:'+'+CFG.cyclops.score, life:1.5, col:'#b8860b'});
     cyclopes.splice(cyclopes.indexOf(c),1);
   }
+}
+
+// ── волны ──────────────────────────────────────────────────────────
+function startWave(i){
+  waveIdx = i;
+  const list = CFG.waves.list;
+  const w = list[Math.min(i, list.length - 1)];
+  const loops = Math.max(0, i - (list.length - 1)); // сколько раз зациклили последнюю
+  curEvery = Math.max(CFG.waves.minEvery, w.every * Math.pow(CFG.waves.loopSpeedup, loops));
+  spawnQueue = w.order.slice();
+  spawnTimer = 0.6;
+  waveEl.textContent = i + 1;
+}
+
+// ── прокачка ───────────────────────────────────────────────────────
+// урон по горе с учётом скилла «Каменная кладка»
+function mountainDmg(base){
+  return Math.round(base * (1 - CFG.skills.armor.mult * sk('armor')));
+}
+
+// взрывная волна от падения брошенного демона (скилл shockwave)
+function spawnShockwave(x, y, src){
+  const r = CFG.skills.shockwave.radius + CFG.skills.shockRadius.add * sk('shockRadius');
+  const dmg = CFG.skills.shockwave.dmg + sk('shockDmg');
+  shockwaves.push({x, y, r: 8, max: r, life: .45});
+  sfx.thud();
+  for(const o of [...demons]){
+    if(o === src || o.state === 'held' || !demons.includes(o)) continue;
+    const os = sizeOf(o);
+    if(Math.hypot(o.x + os/2 - x, o.y + os/2 - y) <= r) hurt(o, dmg, 450);
+  }
+}
+
+function updateXPBar(){
+  lvlEl.textContent = player.level;
+  xpFill.style.width = Math.min(100, 100 * player.xp / player.xpNeed) + '%';
+}
+
+function gainXP(n){
+  player.xp += n;
+  while(player.xp >= player.xpNeed){
+    player.xp -= player.xpNeed;
+    player.level++;
+    player.xpNeed = Math.round(player.xpNeed * CFG.leveling.growth);
+    pendingLevels++;
+  }
+  updateXPBar();
+  if(pendingLevels > 0 && !choosing && running) openSkillChoice();
+}
+
+// скиллы, доступные к выпадению: не на максимуме и с выполненными требованиями
+function availableSkills(){
+  return Object.entries(CFG.skills)
+    .filter(([id, sd]) => sk(id) < sd.max && (!sd.requires || sk(sd.requires) > 0))
+    .map(([id, sd]) => ({id, ...sd}));
+}
+
+function openSkillChoice(){
+  // аккуратно выпускаем демона из руки
+  if(held){
+    held.state = 'fly'; held.vx = held.vy = 0;
+    held.armed = false; held.noDmg = true;
+    held = null; cv.classList.remove('grabbing');
+  }
+  const pool = availableSkills();
+  if(pool.length === 0){
+    // всё прокачано — вместо скилла чиним гору
+    pendingLevels--;
+    hp = Math.min(100, hp + 15); hpFill.style.width = hp + '%';
+    floaties.push({x: MOUNTAIN_X, y: 200, txt: '+15 ГОРЕ', life: 1.4, col: '#2f6e3c'});
+    if(pendingLevels > 0) openSkillChoice();
+    return;
+  }
+  choosing = true;
+  const offer = pool.sort(() => Math.random() - .5).slice(0, 3);
+  skillCards.innerHTML = '';
+  for(const s of offer){
+    const btn = document.createElement('button');
+    btn.className = 'skill-card';
+    btn.innerHTML = '<b>' + s.name + '</b>' + s.desc +
+      '<div class="lvl-tag">уровень ' + (sk(s.id)+1) + '/' + s.max + '</div>';
+    btn.addEventListener('click', () => pickSkill(s.id));
+    skillCards.appendChild(btn);
+  }
+  lvlOverlay.classList.remove('hidden');
+}
+
+function pickSkill(id){
+  player.skills[id] = sk(id) + 1;
+  pendingLevels--;
+  lvlOverlay.classList.add('hidden');
+  if(pendingLevels > 0){ openSkillChoice(); return; }
+  choosing = false;
+  // сбрасываем скорость мыши, чтобы после паузы не было фантомного рывка
+  mouse.px = mouse.x; mouse.py = mouse.y; mouse.vx = mouse.vy = 0;
 }
 
 // ── управление ─────────────────────────────────────────────────────
@@ -380,10 +548,11 @@ function onDown(e){
   mouse.vx = mouse.vy = 0;
   let best=null, bd=1e9;
   for(const d of demons){
-    if(d.state==='held') continue;
+    if(d.state==='held' || TYPES[d.type].liftable === false) continue;
     const s = sizeOf(d);
     const dist = Math.hypot(p.x-(d.x+s/2), p.y-(d.y+s/2));
-    if(dist < TYPES[d.type].grabR && dist < bd){ best=d; bd=dist; }
+    const gr = TYPES[d.type].grabR * (1 + CFG.skills.grip.mult * sk('grip'));
+    if(dist < gr && dist < bd){ best=d; bd=dist; }
   }
   if(best){
     held = best; best.state='held'; best.rotV = 0;
@@ -392,13 +561,21 @@ function onDown(e){
     sfx.grab();
     e.preventDefault();
   } else {
-    // ткнули в циклопа — его не поднять
-    for(const c of cyclopes){
-      if(p.x > c.x && p.x < c.x+CYC_W && p.y > c.y && p.y < c.y+CYC_H){
-        floaties.push({x:p.x, y:p.y-12, txt:'НЕ ПОДНЯТЬ!', life:1, col:'#1a1626'});
-        sfx.thud();
-        break;
+    // ткнули в неподъёмного — огромного демона или циклопа
+    let hit = false;
+    for(const d of demons){
+      if(TYPES[d.type].liftable !== false) continue;
+      const s = sizeOf(d);
+      if(p.x > d.x && p.x < d.x+s && p.y > d.y && p.y < d.y+s){ hit = true; break; }
+    }
+    if(!hit){
+      for(const c of cyclopes){
+        if(p.x > c.x && p.x < c.x+CYC_W && p.y > c.y && p.y < c.y+CYC_H){ hit = true; break; }
       }
+    }
+    if(hit){
+      floaties.push({x:p.x, y:p.y-12, txt:'НЕ ПОДНЯТЬ!', life:1, col:'#1a1626'});
+      sfx.thud();
     }
   }
 }
@@ -411,11 +588,13 @@ function onUp(){
   if(held){
     const T = TYPES[held.type];
     held.state='fly';
-    // тяжёлых надо швырять быстрее: скорость броска гасится весом
-    held.vx = mouse.vx * T.throwF; held.vy = mouse.vy * T.throwF;
-    held.rotV = (Math.abs(held.vx)+Math.abs(held.vy)) * 0.02 * (held.vx<0?-1:1) + rnd(-3,3);
+    // тяжёлых надо швырять быстрее: скорость броска гасится весом (+ скилл «Могучий замах»)
+    const tf = T.throwF * (1 + CFG.skills.strongArm.mult * sk('strongArm'));
+    held.vx = mouse.vx * tf; held.vy = mouse.vy * tf;
+    held.rotV = (Math.abs(held.vx)+Math.abs(held.vy)) * CFG.throwing.spin * (held.vx<0?-1:1) + rnd(-1,1);
     held.grounded = false;
     held.armed = true; // заряжен до первого касания земли
+    held.hitsLeft = sk('collide'); // без «Тарана» столкновения безвредны
     sfx.throw();
     held = null;
   }
@@ -433,7 +612,7 @@ let last = 0;
 function loop(ts){
   const dt = Math.min(.033, (ts-last)/1000 || .016);
   last = ts;
-  if(running) update(dt);
+  if(running && !choosing) update(dt);
   draw();
   requestAnimationFrame(loop);
 }
@@ -444,15 +623,20 @@ function update(dt){
   mouse.vy = mouse.vy*0.55 + ((mouse.y-mouse.py)/dt)*0.45*0.9;
   mouse.px = mouse.x; mouse.py = mouse.y;
 
-  spawnTimer -= dt;
-  if(spawnTimer <= 0){
-    spawnDemon();
-    spawnTimer = Math.max(0.55, 2.2 - wave*0.18) * rnd(.7,1.3);
-  }
-  waveTimer += dt;
-  if(waveTimer > 20){
-    waveTimer = 0; wave++; waveEl.textContent = wave;
-    if(wave >= 3 && wave % 2 === 1) spawnCyclops();
+  // спавн по очереди текущей волны (см. CFG.waves)
+  if(spawnQueue.length){
+    spawnTimer -= dt;
+    if(spawnTimer <= 0){
+      const t = spawnQueue.shift();
+      t === 'cyclops' ? spawnCyclops() : spawnDemon(t);
+      spawnTimer = curEvery * rnd(.85, 1.15);
+    }
+  } else {
+    betweenTimer += dt;
+    if(betweenTimer >= CFG.waves.pauseBetween){
+      betweenTimer = 0;
+      startWave(waveIdx + 1);
+    }
   }
 
   for(const d of [...demons]){
@@ -475,17 +659,6 @@ function update(dt){
       d.x += (tx - d.x) * Math.min(1, dt*T.follow);
       d.y += (ty - d.y) * Math.min(1, dt*T.follow);
       d.rot = Math.sin(d.t*14) * 0.45;
-
-      // огромного высоко не поднять — вываливается из рук, без урона от падения
-      if(T.liftMax !== undefined && (GROUND_Y - (d.y + s)) > T.liftMax){
-        held = null; cv.classList.remove('grabbing');
-        d.state = 'fly';
-        d.vx = mouse.vx * 0.2; d.vy = 80; d.rotV = rnd(-1.5, 1.5);
-        d.noDmg = true; d.armed = false;
-        floaties.push({x:d.x+s/2, y:d.y-8, txt:'УПС!', life:1, col:'#1a1626'});
-        sfx.thud();
-        continue;
-      }
 
       // ── упор в землю: не проваливается, а стукается ──
       const floor = GROUND_Y - s;
@@ -521,9 +694,10 @@ function update(dt){
       if(d.y < 4){ d.y = 4; d.vy = Math.abs(d.vy)*.4; }
 
       // ── столкновения с другими демонами: взаимный урон ──
-      // урон наносит только «заряженный» демон — брошенный и ещё не коснувшийся земли
+      // открывается скиллом «Таран»; урон наносит только «заряженный» демон —
+      // брошенный, не коснувшийся земли и с запасом жертв (hitsLeft)
       let spNow = Math.hypot(d.vx, d.vy);
-      if(d.armed && spNow >= SPD_LIGHT){
+      if(d.armed && d.hitsLeft > 0 && spNow >= SPD_LIGHT){
         for(const o of [...demons]){
           if(!demons.includes(d)) break;
           if(o===d || !demons.includes(o) || o.state==='held' || o.flash>0) continue;
@@ -532,17 +706,19 @@ function update(dt){
           if(rel < SPD_LIGHT) continue;
           const dist = Math.hypot((d.x+s/2)-(o.x+os/2), (d.y+s/2)-(o.y+os/2));
           if(dist > (s+os)*0.38) continue;
-          const dmgOut  = impactDamage(rel, true);
+          const dmgOut  = impactDamage(rel, true) + sk('throwDmg');
           // ответный урон не больше макс. ХП жертвы: мелкий вернёт максимум 1
           const dmgBack = Math.min(TYPES[o.type].hp, dmgOut);
           hurt(o, dmgOut, rel);
           if(demons.includes(o)){ // жертва выжила — отлетает (но сама уже не «заряжена»)
             o.state='fly'; o.vx = d.vx*0.7; o.vy = -170;
-            o.rotV = rnd(-4,4); o.grounded = false; o.armed = false;
+            o.rotV = rnd(-4,4); o.grounded = false; o.armed = false; o.hitsLeft = 0;
           }
           hurt(d, dmgBack, rel);
           d.vx *= 0.55; d.vy *= 0.55;
           spNow = Math.hypot(d.vx, d.vy);
+          d.hitsLeft--;
+          if(d.hitsLeft <= 0) break;
         }
         if(!demons.includes(d)) continue;
       }
@@ -553,8 +729,9 @@ function update(dt){
         const sp3 = Math.hypot(d.vx, d.vy);
         const dEye = Math.hypot(d.x+s/2-(c.x+CYC_EYE.x), d.y+s/2-(c.y+CYC_EYE.y));
         if(d.armed && dEye < CYC_EYE.r + s*0.3 && sp3 >= SPD_LIGHT){
-          // урон в глаз: текущее ХП моба × скорость, но не выше его макс. ХП
-          const dmg = Math.max(1, Math.min(TYPES[d.type].hp, Math.round(d.hp * sp3 / CFG.cyclops.eyeDmgDiv)));
+          // урон в глаз: текущее ХП моба × скорость, потолок — макс. ХП моба (+ прокачка броска)
+          const cap = TYPES[d.type].hp + sk('throwDmg');
+          const dmg = Math.max(1, Math.min(cap, Math.round(d.hp * sp3 / CFG.cyclops.eyeDmgDiv) + sk('throwDmg')));
           hitCyclops(c, dmg);
           splat(d, sp3); // сам моб разбивается о глаз
         } else {
@@ -581,8 +758,13 @@ function update(dt){
         const sp = Math.hypot(d.vx, d.vy);
         const down = d.vy > Math.abs(d.vx)*0.5;
         // урон от пола только при первом касании за бросок; дальше — разряжен
-        const dmg = d.armed ? impactDamage(sp, down) : 0;
+        const wasArmed = d.armed;
+        const dmg = wasArmed ? impactDamage(sp, down) : 0;
         d.armed = false;
+        d.rotV *= CFG.throwing.spinFloorDamp; // об пол вращение гасится
+        if(wasArmed && sk('shockwave') > 0 && sp >= SPD_LIGHT){
+          spawnShockwave(d.x + s/2, GROUND_Y, d);
+        }
         if(dmg > 0){
           hurt(d, dmg, sp);
           if(!demons.includes(d)) continue; // разбился
@@ -618,10 +800,11 @@ function update(dt){
       c.poundT -= dt;
       if(c.poundT <= 0){
         c.poundT = CFG.cyclops.poundEvery;
-        hp = Math.max(0, hp - CFG.cyclops.mtnDmg);
+        const pd = mountainDmg(CFG.cyclops.mtnDmg);
+        hp = Math.max(0, hp - pd);
         hpFill.style.width = hp + '%';
         shake = CFG.cyclops.shakePound; sfx.reach();
-        floaties.push({x:MOUNTAIN_X+40, y:GROUND_Y-170, txt:'-'+CFG.cyclops.mtnDmg, life:1.2, col:'#c0392b'});
+        floaties.push({x:MOUNTAIN_X+40, y:GROUND_Y-170, txt:'-'+pd, life:1.2, col:'#c0392b'});
         for(let i=0;i<14;i++){
           particles.push({x:MOUNTAIN_X+rnd(-30,60), y:rnd(180,GROUND_Y-40), vx:rnd(-60,220), vy:rnd(-220,-40),
             col:'#7a4a32', life:rnd(.4,.9), size:rnd(2,5)});
@@ -635,6 +818,11 @@ function update(dt){
     p.vy += GRAV*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt;
     if(p.y > GROUND_Y) { p.y = GROUND_Y; p.vy = 0; p.vx *= .8; }
     if(p.life<=0) particles.splice(particles.indexOf(p),1);
+  }
+  for(const wv of [...shockwaves]){
+    wv.r += (wv.max - wv.r) * Math.min(1, dt*10);
+    wv.life -= dt;
+    if(wv.life <= 0) shockwaves.splice(shockwaves.indexOf(wv),1);
   }
   for(const pl of [...puddles]){
     if(pl.r < pl.max) pl.r += dt*60;
@@ -670,6 +858,16 @@ function draw(){
     cx.beginPath();
     cx.ellipse(pl.x+pl.r*.5, pl.y+2, pl.r*.35, pl.r*.12, 0, 0, Math.PI*2);
     cx.fill();
+    cx.globalAlpha = 1;
+  }
+
+  for(const wv of shockwaves){
+    cx.globalAlpha = Math.max(0, Math.min(1, wv.life*2.5));
+    cx.strokeStyle = '#fffdf5';
+    cx.lineWidth = 3;
+    cx.beginPath();
+    cx.ellipse(wv.x, wv.y+2, wv.r, wv.r*0.3, 0, 0, Math.PI*2);
+    cx.stroke();
     cx.globalAlpha = 1;
   }
 
@@ -794,6 +992,10 @@ function drawMountain(){
 const scoreEl = document.getElementById('score');
 const waveEl = document.getElementById('wave');
 const hpFill = document.getElementById('hpfill');
+const lvlEl = document.getElementById('lvl');
+const xpFill = document.getElementById('xpfill');
+const lvlOverlay = document.getElementById('lvlOverlay');
+const skillCards = document.getElementById('skillCards');
 const overlay = document.getElementById('overlay');
 const ovTitle = document.getElementById('ov-title');
 const ovText = document.getElementById('ov-text');
@@ -801,14 +1003,21 @@ const ovScore = document.getElementById('ov-score');
 const startBtn = document.getElementById('startBtn');
 
 function start(){
-  demons=[]; puddles=[]; particles=[]; floaties=[]; cyclopes=[];
-  score=0; hp=100; wave=1; spawnTimer=0.5; waveTimer=0; held=null;
-  scoreEl.textContent='0'; waveEl.textContent='1'; hpFill.style.width='100%';
+  demons=[]; puddles=[]; particles=[]; floaties=[]; cyclopes=[]; shockwaves=[];
+  score=0; hp=100; held=null; betweenTimer=0;
+  player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
+  pendingLevels = 0; choosing = false;
+  scoreEl.textContent='0'; hpFill.style.width='100%';
+  updateXPBar();
+  startWave(0);
   overlay.classList.add('hidden');
+  lvlOverlay.classList.add('hidden');
   running = true;
 }
 function gameOver(){
   running = false; held = null;
+  choosing = false; pendingLevels = 0;
+  lvlOverlay.classList.add('hidden');
   cv.classList.remove('grabbing');
   ovTitle.textContent = 'Гора пала…';
   ovText.innerHTML = 'Демоны прогрызли гору насквозь.<br>Но сколько луж ты после себя оставил!';
