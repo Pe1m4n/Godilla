@@ -70,5 +70,11 @@ canvas.grabbing{cursor:grabbing;}
   border:2px solid var(--ink);cursor:pointer;
 }
 #fsBtn:hover{background:#ffd76a;}
+/* плёночное зерно поверх всего экрана: картинку шума и прозрачность подставляет game.js (блок GRAIN) */
+#grain{
+  position:fixed;inset:0;z-index:60;
+  pointer-events:none;
+  mix-blend-mode:overlay;
+}
 .hidden{display:none !important;}
 .bigscore{font-size:22px;color:#ffd76a;letter-spacing:2px;}

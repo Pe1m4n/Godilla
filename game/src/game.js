@@ -12,7 +12,7 @@ cx.imageSmoothingEnabled = false;
 
 const W = cv.width, H = cv.height;
 const GROUND_Y = H - 130;
-const MOUNTAIN_X = 195;          // где демоны/циклоп упираются в замок (правый край стены)
+const MOUNTAIN_X = 195;          // где демоны/циклоп упираются во врата Асгарда (правый край стены)
 const CASTLE_SINK = 6;           // на сколько пикселей опустить замок ниже линии земли
 
 // слоты заклинаний — внизу экрана по центру
@@ -45,6 +45,46 @@ const FLAG = {
   stockX: 201,  stockBottom:  540 - 331, // флагшток: низ на высоте 331 → y=209
   bannerX: 222, bannerBottom: 540 - 267, // полотно: левый-низ на высоте 267 → y=273
 };
+
+// ── god rays: лучи света из-за облаков, падают на замок (тюнинг) ──
+// Источник — над верхней кромкой ближе к центру экрана, как будто солнце за облаками.
+const GODRAYS = {
+  src: { x: 480, y: -70 },  // откуда светит (выше экрана)
+  color: '255, 243, 196',   // тёплый свет, r,g,b
+  alpha: 0.14,              // базовая яркость (0 — выключить)
+  sway: 10,                 // насколько гуляет точка падения, px
+  swaySpeed: 0.25,          // скорость покачивания
+  pulseSpeed: 0.5,          // скорость «дыхания» яркости
+  // x — куда падает луч (у земли), w — полуширина там, srcW — полуширина у источника
+  beams: [
+    { x: 60,  w: 58, srcW: 8, phase: 0.0 },
+    { x: 140, w: 44, srcW: 6, phase: 2.1 },
+    { x: 205, w: 32, srcW: 5, phase: 4.4 },
+  ],
+};
+
+// ── зернистость: статичный плёночный шум поверх всей картинки (тюнинг) ──
+// Живёт в DOM-слое #grain поверх игры и НЕ масштабируется вместе с холстом,
+// поэтому зерно остаётся мелким (в пикселях монитора) даже в полном экране.
+const GRAIN = {
+  opacity: 0.04, // сила зерна (0 — выключить)
+  size: 192,     // размер тайла шума, px монитора
+};
+{
+  const c = document.createElement('canvas');
+  c.width = c.height = GRAIN.size;
+  const g = c.getContext('2d');
+  const img = g.createImageData(GRAIN.size, GRAIN.size);
+  for(let i = 0; i < img.data.length; i += 4){
+    const v = (Math.random()*255)|0;
+    img.data[i] = img.data[i+1] = img.data[i+2] = v;
+    img.data[i+3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const grainEl = document.getElementById('grain');
+  grainEl.style.backgroundImage = `url(${c.toDataURL()})`;
+  grainEl.style.opacity = GRAIN.opacity;
+}
 
 // ── состояние ──────────────────────────────────────────────────────
 let demons = [], puddles = [], particles = [], floaties = [], cyclopes = [], shockwaves = [];
@@ -206,7 +246,7 @@ function startWave(i){
 }
 
 // ── прокачка ───────────────────────────────────────────────────────
-// урон по горе с учётом скилла «Каменная кладка»
+// урон по вратам с учётом скилла «Каменная кладка»
 function mountainDmg(base){
   return Math.round(base * (1 - CFG.skills.armor.mult * sk('armor')));
 }
@@ -259,10 +299,10 @@ function openSkillChoice(){
   }
   const pool = availableSkills();
   if(pool.length === 0){
-    // всё прокачано — вместо скилла чиним гору
+    // всё прокачано — вместо скилла чиним врата
     pendingLevels--;
     hp = Math.min(100, hp + 15); hpFill.style.width = hp + '%';
-    floaties.push({x: MOUNTAIN_X, y: 200, txt: '+15 ГОРЕ', life: 1.4, col: '#2f6e3c'});
+    floaties.push({x: MOUNTAIN_X, y: 200, txt: '+15 ВРАТАМ', life: 1.4, col: '#2f6e3c'});
     if(pendingLevels > 0) openSkillChoice();
     return;
   }
@@ -837,7 +877,7 @@ function update(dt){
       bl.vy = -bl.vy * 0.3;
       bl.vx -= bl.vx * 1.2 * dt; // трение качения
     }
-    // гора и правая стена — отскок
+    // врата и правая стена — отскок
     if(bl.x < MOUNTAIN_X + 50){ bl.x = MOUNTAIN_X + 50; bl.vx = Math.abs(bl.vx)*0.5; }
     if(bl.x > W - B.r){ bl.x = W - B.r; bl.vx = -Math.abs(bl.vx)*0.5; }
     // остановился на поле — рассыпается и исчезает
@@ -863,7 +903,7 @@ function update(dt){
       if(c.step <= 0){ c.step = 0.8; shake = Math.max(shake, CFG.cyclops.shakeStep); sfx.thud(); }
       if(c.x < MOUNTAIN_X - 20){ c.state = 'pound'; c.poundT = 1; }
     } else {
-      // дошёл — крушит гору ударами
+      // дошёл — крушит врата ударами
       c.poundT -= dt;
       if(c.poundT <= 0){
         c.poundT = CFG.cyclops.poundEvery;
@@ -986,6 +1026,9 @@ function draw(){
 
   // — трава — поверх земли, качается «волной ветра» вдоль линии земли
   drawGrass();
+
+  // — лучи света из-за облаков, ложатся на замок (мобы ходят перед ними) —
+  drawGodRays();
 
   for(const c of cyclopes){
     // тень
@@ -1116,6 +1159,35 @@ function draw(){
 
   drawSpellUI();
 }
+
+// лучи света: вытянутые четырёхугольники от источника за облаками к замку,
+// с градиентом (тают к земле), мягко покачиваются и «дышат» яркостью
+function drawGodRays(){
+  if(GODRAYS.alpha <= 0) return;
+  const t = last * 0.001;
+  cx.save();
+  cx.globalCompositeOperation = 'lighter'; // свет складывается с картинкой
+  for(const b of GODRAYS.beams){
+    const sway = Math.sin(t*GODRAYS.swaySpeed + b.phase) * GODRAYS.sway;
+    const a = GODRAYS.alpha * (0.75 + 0.25*Math.sin(t*GODRAYS.pulseSpeed + b.phase));
+    const sx = GODRAYS.src.x, sy = GODRAYS.src.y;
+    const tx = b.x + sway, ty = GROUND_Y + 4;
+    const g = cx.createLinearGradient(sx, sy, tx, ty);
+    g.addColorStop(0,    `rgba(${GODRAYS.color}, ${a})`);
+    g.addColorStop(0.75, `rgba(${GODRAYS.color}, ${a*0.45})`);
+    g.addColorStop(1,    `rgba(${GODRAYS.color}, 0)`);
+    cx.fillStyle = g;
+    cx.beginPath();
+    cx.moveTo(sx - b.srcW, sy);
+    cx.lineTo(sx + b.srcW, sy);
+    cx.lineTo(tx + b.w, ty);
+    cx.lineTo(tx - b.w, ty);
+    cx.closePath();
+    cx.fill();
+  }
+  cx.restore();
+}
+
 
 // слоты заклинаний + предмет в руке (поверх всего, без тряски камеры)
 function drawSpellUI(){
@@ -1267,8 +1339,10 @@ function gameOver(){
   shake = 0; // игра остановилась — гасим тряску, иначе экран дёргается на экране поражения
   lvlOverlay.classList.add('hidden');
   cv.classList.remove('grabbing');
-  ovTitle.textContent = 'Гора пала…';
-  ovText.innerHTML = 'Демоны прогрызли гору насквозь.<br>Но сколько луж ты после себя оставил!';
+  ovTitle.textContent = 'Врата пали…';
+  ovText.innerHTML = 'Демоны ворвались в Асгард прямо посреди пира.<br>' +
+    'Один разочарованно отставил кубок: к его столу ты пока не готов.<br>' +
+    'Но сколько луж ты после себя оставил!';
   ovScore.textContent = 'Очки: ' + score;
   ovScore.classList.remove('hidden');
   startBtn.textContent = 'Ещё раз';
