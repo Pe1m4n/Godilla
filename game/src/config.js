@@ -12,6 +12,13 @@ export const CFG = {
     hard:  1000,  // 2 урона; быстрее этого и строго вниз — 3 урона
   },
 
+  // Что происходит, когда моба зашвырнули далеко за край экрана вбок:
+  // он не гибнет и не получает урон, а через returnDelay секунд заходит снова справа.
+  offscreen: {
+    margin: 60,        // на сколько px за край должен улететь, чтобы считаться «вне экрана»
+    returnDelay: 5,    // через сколько секунд вернётся в бой
+  },
+
   monsters: {
     //  px         — размер (множитель пиксельного спрайта 9x9)
     //  hp         — здоровье
@@ -21,14 +28,14 @@ export const CFG = {
     //  score      — очки за убийство
     //  throwF     — «вес»: множитель скорости броска (меньше = тяжелее, тяни быстрее)
     //  follow     — как шустро тянется за курсором в руке
-    //  liftable: false — моба нельзя поднять вообще (huge)
+    //  liftable: false — моба нельзя поднять вообще (сейчас таких нет; великан тяжёлый, но поднимаемый)
     //  shakeHurt / shakeSplat — потолок тряски камеры при ранении / смерти
     small: { px: 2.5, hp: 1, mtnDmg: 10, speedMin: 30, speedMax: 48, grabR: 26, score: 1,
              throwF: 1,   follow: 22, shakeHurt: 6,  shakeSplat: 10 },
     big:   { px: 4,   hp: 3, mtnDmg: 20, speedMin: 18, speedMax: 28, grabR: 36, score: 3,
              throwF: 0.7, follow: 14, shakeHurt: 10, shakeSplat: 16 },
-    huge:  { px: 6,   hp: 5, mtnDmg: 30, speedMin: 10, speedMax: 16, score: 5,
-             liftable: false, shakeHurt: 12, shakeSplat: 20 },
+    huge:  { px: 6,   hp: 5, mtnDmg: 30, speedMin: 10, speedMax: 16, grabR: 50, score: 5,
+             throwF: 0.45, follow: 8, shakeHurt: 12, shakeSplat: 20 },
   },
 
   cyclops: {

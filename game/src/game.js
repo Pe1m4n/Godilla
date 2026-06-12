@@ -74,7 +74,8 @@ function spawnDemon(type){
     speed: rnd(T.speedMin, T.speedMax) + waveIdx * CFG.waves.speedPerWave,
     pal: (Math.random()*SPRITES[type].length)|0,
     t: rnd(0,10),
-    state: 'walk',           // walk | held | fly | stun
+    state: 'walk',           // walk | held | fly | stun | offscreen
+    returnT: 0,              // таймер возврата, пока state==='offscreen'
     rot: 0, rotV: 0,
     stun: 0,
     flash: 0,                // вспышка при уроне
@@ -86,6 +87,15 @@ function spawnDemon(type){
   };
   d.y = GROUND_Y - sizeOf(d);
   demons.push(d);
+}
+
+// моб, улетевший за край экрана, заходит в бой заново справа (с теми же ХП)
+function returnFromOffscreen(d){
+  const s = sizeOf(d);
+  d.state = 'walk';
+  d.x = W + 10; d.y = GROUND_Y - s;
+  d.vx = d.vy = 0; d.rot = 0; d.rotV = 0;
+  d.armed = false; d.hitsLeft = 0; d.noDmg = false; d.grounded = true;
 }
 
 // расчёт урона по скорости удара; down — удар направлен вниз
@@ -319,7 +329,7 @@ function castWind(vx, vy){
     });
   }
   for(const d of demons){
-    if(d.state === 'held') continue;
+    if(d.state === 'held' || d.state === 'offscreen') continue;
     if(TYPES[d.type].liftable === false){
       // неподъёмные не сдвигаются — просто замирают
       d.state = 'stun'; d.stun = Math.max(d.stun, CFG.spells.wind.stun);
@@ -613,6 +623,12 @@ function update(dt){
     if(d.cycHit > 0) d.cycHit -= dt;
     const s = sizeOf(d);
 
+    if(d.state === 'offscreen'){
+      // вне экрана: неуязвим, просто ждёт и возвращается в бой
+      d.returnT -= dt;
+      if(d.returnT <= 0) returnFromOffscreen(d);
+      continue;
+    }
     if(d.state === 'walk'){
       d.x -= d.speed * dt;
       const hop = d.type==='big' ? 4 : 7;
@@ -657,9 +673,14 @@ function update(dt){
       d.x += d.vx * dt;
       d.y += d.vy * dt;
       d.rot += d.rotV * dt * 4;
-      if(d.x < 4){ d.x = 4; d.vx = Math.abs(d.vx)*.6; }
-      if(d.x > W-s-4){ d.x = W-s-4; d.vx = -Math.abs(d.vx)*.6; }
-      if(d.y < 4){ d.y = 4; d.vy = Math.abs(d.vy)*.4; }
+      // улетел далеко вбок за экран — не гибнет, уходит «на возврат»
+      const M = CFG.offscreen.margin;
+      if(d.x > W + M || d.x + s < -M){
+        d.state = 'offscreen';
+        d.returnT = CFG.offscreen.returnDelay;
+        d.armed = false; d.hitsLeft = 0;
+        continue;
+      }
 
       // ── столкновения с другими демонами: взаимный урон ──
       // открывается скиллом «Таран»; урон наносит только «заряженный» демон —
@@ -1000,6 +1021,7 @@ function draw(){
   }
 
   for(const d of demons){
+    if(d.state === 'offscreen') continue; // вне экрана — не рисуем
     const s = sizeOf(d);
     // тень
     if(d.state!=='fly' || d.y+s > GROUND_Y-120){
