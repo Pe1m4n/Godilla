@@ -1,5 +1,5 @@
 import {
-  CFG, GRAV, TYPES, SPD_LIGHT, SPD_MED, SPD_HARD,
+  CFG, GRAV, TYPES, SPD_LIGHT,
   PALS, CYC_PAL, CYC_PX, CYC_W, CYC_H, CYC_EYE, SPELL_NAMES,
 } from './config.js';
 import { SPRITES, CYC_SPRITE, SPELL_SPRITES } from './sprites.js';
@@ -14,6 +14,13 @@ const W = cv.width, H = cv.height;
 const GROUND_Y = H - 130;
 const MOUNTAIN_X = 195;          // где демоны/циклоп упираются во врата Асгарда (правый край стены)
 const CASTLE_SINK = 6;           // на сколько пикселей опустить замок ниже линии земли
+
+// ── стена замка: коллизия для летящих и удерживаемых мобов (тюнинг) ──
+// x — правая грань стены; top — y кромки каменной кладки (рога — декор, без коллизии).
+// Ниже кромки моб стукается о стену как об землю и получает урон по скорости;
+// выше — пролетает и может упасть уже в защищаемой зоне за стеной.
+// top = GROUND_Y - 329 + CASTLE_SINK + 51 (камень в castle.png начинается на 51px от верха)
+const WALL = { x: MOUNTAIN_X, top: 138 };
 
 // слоты заклинаний — внизу экрана по центру
 const SLOT = CFG.spells.slotSize, SLOT_GAP = 16;
@@ -123,6 +130,9 @@ function spawnDemon(type){
     armed: false,            // «заряжен» броском: наносит урон, пока не коснулся земли
     hitsLeft: 0,             // сколько мобов ещё может сшибить за этот бросок (скилл «Таран»)
     cycHit: 0,               // таймер: недавно отскочил от циклопа (защита от болтанки между двумя)
+    swing: 0,                // пик скорости замаха в руке (затухает) — по нему считается удар об землю/стену
+    swingVX: 0, swingVY: 0,  // вектор скорости в момент пика — для броска, если курсор уже притормозил
+    walled: false,           // уже упёрся в стену замка (защита от стука каждый кадр)
     flip: Math.random()<.5,
   };
   d.y = GROUND_Y - sizeOf(d);
@@ -136,14 +146,14 @@ function returnFromOffscreen(d){
   d.x = W + 10; d.y = GROUND_Y - s;
   d.vx = d.vy = 0; d.rot = 0; d.rotV = 0;
   d.armed = false; d.hitsLeft = 0; d.noDmg = false; d.grounded = true;
+  d.swing = 0; d.walled = false;
 }
 
-// расчёт урона по скорости удара; down — удар направлен вниз
-function impactDamage(speed, down){
-  if (speed < SPD_LIGHT) return 0;
-  if (speed < SPD_MED)   return 1;
-  if (speed < SPD_HARD)  return 2;
-  return down ? 3 : 2;
+// урон от удара: пока всегда 1 — сила броска не влияет.
+// Скорость задаёт только порог «засчитался ли удар вообще»:
+// медленнее SPD_LIGHT — просто стук без урона.
+function impactDamage(speed){
+  return speed >= SPD_LIGHT ? 1 : 0;
 }
 
 function hurt(d, dmg, sp){
@@ -172,7 +182,8 @@ function splat(d, sp){
   const s = sizeOf(d), px = d.x + s/2, py = d.y + s/2;
   const col = PALS[d.type][d.pal].b;
   const big = d.type !== 'small';
-  const maxR = (d.type==='huge' ? rnd(34,46) : big ? rnd(26,38) : rnd(13,20)) + sp/70;
+  // размер лужи фиксирован по типу моба — от силы броска не зависит
+  const maxR = d.type==='huge' ? rnd(34,46) : big ? rnd(26,38) : rnd(13,20);
   puddles.push({x:px, y:GROUND_Y, r:0, max:maxR, col, life:1});
   for(let i=0; i < (d.type==='huge' ? 30 : big ? 22 : 12); i++){
     particles.push({
@@ -557,6 +568,7 @@ function onDown(e){
   if(best){
     held = best; best.state='held'; best.rotV = 0;
     best.grounded = false; best.noDmg = false;
+    best.swing = 0; best.walled = false;
     cv.classList.add('grabbing');
     sfx.grab();
     e.preventDefault();
@@ -598,10 +610,22 @@ function onUp(){
   if(held){
     const T = TYPES[held.type];
     held.state='fly';
+    // скорость броска: курсор к моменту отпускания часто уже притормозил
+    // (скорость мыши затухает за пару кадров) — если затухающий пик замаха
+    // больше текущей скорости, бросаем по вектору пика, чтобы рывок не пропадал
+    let vx = mouse.vx, vy = mouse.vy;
+    if(held.swing > Math.hypot(vx, vy)){ vx = held.swingVX; vy = held.swingVY; }
     // тяжёлых надо швырять быстрее: скорость броска гасится весом (+ скилл «Могучий замах»)
     const tf = T.throwF * (1 + CFG.skills.strongArm.mult * sk('strongArm'));
-    held.vx = mouse.vx * tf; held.vy = mouse.vy * tf;
+    held.vx = vx * tf; held.vy = vy * tf;
     held.rotV = (Math.abs(held.vx)+Math.abs(held.vy)) * CFG.throwing.spin * (held.vx<0?-1:1) + rnd(-1,1);
+    // бросок вдоль земли, когда моб уже стоит на полу: чуть подбрасываем,
+    // иначе он «втыкается» в землю на первом же кадре полёта и замирает в стане
+    const fl = GROUND_Y - sizeOf(held);
+    if(held.y >= fl - 2 && Math.abs(held.vx) > 200 &&
+       held.vy > -160 && held.vy < Math.abs(held.vx)*0.5){
+      held.vy = -Math.max(200, Math.abs(held.vx)*0.12);
+    }
     held.grounded = false;
     held.armed = true; // заряжен до первого касания земли
     held.hitsLeft = sk('collide'); // без «Тарана» столкновения безвредны
@@ -683,36 +707,59 @@ function update(dt){
     else if(d.state === 'held'){
       const T = TYPES[d.type];
       // тянемся к курсору (тяжёлые — медленнее, отстают)
+      const px0 = d.x; // позиция до шага — чтобы знать, с какой стороны подошли к стене
       const tx = mouse.x - s/2, ty = mouse.y - s/2;
       d.x += (tx - d.x) * Math.min(1, dt*T.follow);
       d.y += (ty - d.y) * Math.min(1, dt*T.follow);
       d.rot = Math.sin(d.t*14) * 0.45;
+
+      // пик скорости замаха: моб отстаёт от курсора и долетает до земли уже после
+      // того, как рука остановилась, — поэтому силу удара меряем не в момент касания,
+      // а как затухающий максимум скорости курсора за замах
+      const spCur = Math.hypot(mouse.vx, mouse.vy);
+      if(spCur >= d.swing){
+        d.swing = spCur;
+        d.swingVX = mouse.vx; d.swingVY = mouse.vy;
+      } else {
+        const f = Math.pow(0.5, dt / CFG.impact.swingFade);
+        d.swing *= f; d.swingVX *= f; d.swingVY *= f;
+      }
 
       // ── упор в землю: не проваливается, а стукается ──
       const floor = GROUND_Y - s;
       if(d.y >= floor){
         d.y = floor;
         if(!d.grounded){
-          // момент контакта — считаем скорость удара по курсору
           d.grounded = true;
-          const sp = Math.hypot(mouse.vx, mouse.vy);
-          const down = mouse.vy > Math.abs(mouse.vx)*0.5; // удар в основном вниз
-          const dmg = impactDamage(sp, down);
-          if(dmg > 0){
-            hurt(d, dmg, sp);
-          } else {
-            sfx.thud();
-          }
+          const dmg = impactDamage(d.swing);
+          if(dmg > 0){ hurt(d, dmg, d.swing); d.swing = 0; }
+          else sfx.thud();
         }
         // лёгкое "вдавливание" — сплющивается
         d.rot = 0;
-      } else if (d.y < floor - 10){
-        d.grounded = false; // оторвали от земли — можно бить снова
+      } else if (ty < floor - 12){
+        // курсор подняли над землёй — следующий удар снова засчитается
+        // (раньше ждали подъёма самого моба: тяжёлые не успевали «отлипнуть»,
+        // и повторные удары пропадали)
+        d.grounded = false;
       }
       // в стены тоже упирается
       d.x = Math.max(4, Math.min(W-s-4, d.x));
+      // ── стена замка: подошёл справа ниже кромки — стукается; выше — проносится ──
+      if(d.x < WALL.x && d.y + s > WALL.top && px0 >= WALL.x){
+        d.x = WALL.x;
+        if(!d.walled){
+          d.walled = true;
+          const dmg = impactDamage(d.swing);
+          if(dmg > 0){ hurt(d, dmg, d.swing); d.swing = 0; }
+          else sfx.thud();
+        }
+      } else if(d.x > WALL.x + 12){
+        d.walled = false;
+      }
     }
     else if(d.state === 'fly'){
+      const px0 = d.x; // позиция до шага — для коллизии со стеной замка
       d.vy += GRAV * dt;
       d.x += d.vx * dt;
       d.y += d.vy * dt;
@@ -739,7 +786,7 @@ function update(dt){
           if(rel < SPD_LIGHT) continue;
           const dist = Math.hypot((d.x+s/2)-(o.x+os/2), (d.y+s/2)-(o.y+os/2));
           if(dist > (s+os)*0.38) continue;
-          const dmgOut  = impactDamage(rel, true) + sk('throwDmg');
+          const dmgOut  = impactDamage(rel) + sk('throwDmg');
           // ответный урон не больше макс. ХП жертвы: мелкий вернёт максимум 1
           const dmgBack = Math.min(TYPES[o.type].hp, dmgOut);
           hurt(o, dmgOut, rel);
@@ -762,11 +809,17 @@ function update(dt){
         const sp3 = Math.hypot(d.vx, d.vy);
         const dEye = Math.hypot(d.x+s/2-(c.x+CYC_EYE.x), d.y+s/2-(c.y+CYC_EYE.y));
         if(d.armed && dEye < CYC_EYE.r + s*0.3 && sp3 >= SPD_LIGHT){
-          // урон в глаз: текущее ХП моба × скорость, потолок — макс. ХП моба (+ прокачка броска)
-          const cap = TYPES[d.type].hp + sk('throwDmg');
-          const dmg = Math.max(1, Math.min(cap, Math.round(d.hp * sp3 / CFG.cyclops.eyeDmgDiv) + sk('throwDmg')));
-          hitCyclops(c, dmg);
-          splat(d, sp3); // сам моб разбивается о глаз
+          // обмен ударами: моб наносит циклопу 1 урона и сам получает 1
+          // (раньше урон считался по скорости, а моб разбивался о глаз насмерть)
+          hitCyclops(c, 1);
+          d.armed = false; // бросок «разряжен» — второй раз глаз не бьёт
+          hurt(d, 1, sp3);
+          if(demons.includes(d)){ // выжил — отлетает от глаза, как от корпуса
+            const fromLeft = d.x+s/2 < c.x+CYC_W/2;
+            d.x = fromLeft ? c.x - s + CYC_PX : c.x + CYC_W - CYC_PX;
+            d.vx = (fromLeft ? -1 : 1) * Math.max(140, Math.abs(d.vx)*0.45);
+            d.cycHit = 0.25;
+          }
         } else if(d.cycHit <= 0){
           // корпус — демон отскакивает в сторону, урона нет.
           // НЕ толкаем вверх (иначе зависает в воздухе) и ставим таймер,
@@ -781,6 +834,22 @@ function update(dt){
       }
       if(!demons.includes(d)) continue;
 
+      // ── стена замка: прилетел справа ниже кромки — стукается как об землю ──
+      // (выше кромки — пролетает и может упасть уже в защищаемой зоне)
+      if(d.x < WALL.x && d.y + s > WALL.top && px0 >= WALL.x){
+        d.x = WALL.x;
+        const sp = Math.hypot(d.vx, d.vy);
+        const wasArmed = d.armed;
+        d.armed = false; // о стену бросок «разряжается», как об пол
+        const dmg = wasArmed ? impactDamage(sp) : 0;
+        if(dmg > 0){
+          hurt(d, dmg, sp);
+          if(!demons.includes(d)) continue; // разбился о стену
+        } else sfx.thud();
+        d.vx = Math.max(140, Math.abs(d.vx)*0.45); // отскок вправо от стены
+        d.rotV *= CFG.throwing.spinFloorDamp;
+      }
+
       if(d.y + s >= GROUND_Y){
         d.y = GROUND_Y - s;
         if(d.noDmg){
@@ -791,10 +860,9 @@ function update(dt){
           continue;
         }
         const sp = Math.hypot(d.vx, d.vy);
-        const down = d.vy > Math.abs(d.vx)*0.5;
         // урон от пола только при первом касании за бросок; дальше — разряжен
         const wasArmed = d.armed;
-        const dmg = wasArmed ? impactDamage(sp, down) : 0;
+        const dmg = wasArmed ? impactDamage(sp) : 0;
         d.armed = false;
         d.rotV *= CFG.throwing.spinFloorDamp; // об пол вращение гасится
         if(wasArmed && sk('shockwave') > 0 && sp >= SPD_LIGHT){
