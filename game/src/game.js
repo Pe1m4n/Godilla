@@ -598,12 +598,16 @@ function update(dt){
   if(spawnQueue.length){
     spawnTimer -= dt;
     if(spawnTimer <= 0){
-      const t = spawnQueue[0];
-      // циклоп — мини-босс: пока живой на экране, следующего не выпускаем
-      if(t === 'cyclops' && cyclopes.length >= CFG.cyclops.maxAlive){
-        spawnTimer = 1.0; // подождём и проверим снова
+      // циклоп — мини-босс: пока он жив, его выход откладываем, но остальная
+      // волна продолжает идти — выпускаем следующего НЕ-циклопа из очереди
+      let idx = 0;
+      if(spawnQueue[0] === 'cyclops' && cyclopes.length >= CFG.cyclops.maxAlive){
+        idx = spawnQueue.findIndex(x => x !== 'cyclops');
+      }
+      if(idx === -1){
+        spawnTimer = 0.8; // в очереди остались только циклопы — ждём смерти текущего
       } else {
-        spawnQueue.shift();
+        const t = spawnQueue.splice(idx, 1)[0];
         t === 'cyclops' ? spawnCyclops() : spawnDemon(t);
         spawnTimer = curEvery * rnd(.85, 1.15);
       }

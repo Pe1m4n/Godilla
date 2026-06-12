@@ -7,9 +7,9 @@ export const CFG = {
   // Работают для броска, падения и ударов об землю прямо в руке.
   // Высота падения учитывается сама собой: чем выше упал, тем больше скорость у земли.
   impact: {
-    light: 300,   // медленнее — вообще без урона
-    med:   650,   // 1 урон
-    hard:  1000,  // 2 урона; быстрее этого и строго вниз — 3 урона
+    light: 520,   // медленнее — вообще без урона (раньше 300; теперь надо разогнать сильнее)
+    med:   1000,  // 1 урон
+    hard:  1550,  // 2 урона; быстрее этого и строго вниз — 3 урона
   },
 
   // Что происходит, когда моба зашвырнули далеко за край экрана вбок:
@@ -31,11 +31,11 @@ export const CFG = {
     //  liftable: false — моба нельзя поднять вообще (сейчас таких нет; великан тяжёлый, но поднимаемый)
     //  shakeHurt / shakeSplat — потолок тряски камеры при ранении / смерти
     small: { px: 2.5, hp: 1, mtnDmg: 10, speedMin: 30, speedMax: 48, grabR: 26, score: 1,
-             throwF: 1,   follow: 22, shakeHurt: 6,  shakeSplat: 10 },
+             throwF: 0.25,   follow: 22, shakeHurt: 6,  shakeSplat: 10 },
     big:   { px: 4,   hp: 3, mtnDmg: 20, speedMin: 18, speedMax: 28, grabR: 36, score: 3,
-             throwF: 0.7, follow: 14, shakeHurt: 10, shakeSplat: 16 },
+             throwF: 0.175,  follow: 14, shakeHurt: 10, shakeSplat: 16 },
     huge:  { px: 6,   hp: 5, mtnDmg: 30, speedMin: 10, speedMax: 16, grabR: 50, score: 5,
-             throwF: 0.45, follow: 8, shakeHurt: 12, shakeSplat: 20 },
+             throwF: 0.1125, follow: 8,  shakeHurt: 12, shakeSplat: 20 },
   },
 
   cyclops: {
@@ -122,11 +122,11 @@ export const CFG = {
     loopSpeedup: 0.9,    // множитель интервала за каждый повтор последней волны
     minEvery: 0.45,      // чаще этого не спавнит
     list: [
-      { every: 1.7, order: ['small','small','small','small','small'] },
-      { every: 1.5, order: ['small','small','big','small','small','small','big'] },
-      { every: 1.4, order: ['big','small','small','huge','small','small','big','small'] },
-      { every: 1.2, order: ['small','cyclops','small','big','small','huge','small','big'] },
-      { every: 1.0, order: ['huge','small','big','small','cyclops','small','huge','big','small','small','small'] },
+      { every: 1.5, order: ['small','small','small','small','small','small','small'] },
+      { every: 1.3, order: ['small','small','big','small','small','small','big','small','small'] },
+      { every: 1.2, order: ['big','small','small','huge','small','small','big','small','small','big','small'] },
+      { every: 1.0, order: ['small','small','cyclops','small','big','small','small','huge','small','big','small','small','big','small'] },
+      { every: 0.85, order: ['huge','small','small','big','small','cyclops','small','small','huge','big','small','small','big','small','huge','small','small','big','small'] },
     ],
   },
 };
