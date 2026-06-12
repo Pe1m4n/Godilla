@@ -3,7 +3,8 @@ import {
   PALS, CYC_PAL, CYC_PX, CYC_W, CYC_H, CYC_EYE, SPELL_NAMES,
 } from './config.js';
 import { SPRITES, CYC_SPRITE, SPELL_SPRITES } from './sprites.js';
-import { sfx } from './audio.js';
+import { sfx, toggleMute } from './audio.js';
+import { art } from './assets.js';
 
 const cv = document.getElementById('game');
 const cx = cv.getContext('2d');
@@ -11,7 +12,8 @@ cx.imageSmoothingEnabled = false;
 
 const W = cv.width, H = cv.height;
 const GROUND_Y = H - 130;
-const MOUNTAIN_X = 150;
+const MOUNTAIN_X = 195;          // где демоны/циклоп упираются в замок (правый край стены)
+const CASTLE_SINK = 6;           // на сколько пикселей опустить замок ниже линии земли
 
 // слоты заклинаний — внизу экрана по центру
 const SLOT = CFG.spells.slotSize, SLOT_GAP = 16;
@@ -20,6 +22,29 @@ const SLOT_Y = H - SLOT - 18;
 
 // размер моба в пикселях экрана
 const sizeOf = d => 9 * TYPES[d.type].px;
+
+// ── облака: плывут на фоне (x,y в дизайн-координатах, spd — px/сек, минус = влево) ──
+const clouds = [
+  { key:'cloud1', x: 240, y: 64,  spd: -9  },
+  { key:'cloud2', x: 560, y: 120, spd: -6  },
+  { key:'cloud3', x: 830, y: 52,  spd: -12 },
+];
+function updateClouds(dt){
+  for(const c of clouds){
+    const w = art[c.key] ? art[c.key].width : 210;
+    c.x += c.spd * dt;
+    if(c.x + w < -40) c.x = W + 40;       // уплыло влево — заводим справа
+    else if(c.x > W + 40) c.x = -w - 40;
+  }
+}
+
+// ── раскладка флага (тюнинг) ──
+// Y заданы в пикселях от НИЗА экрана (экран 540 → y_холста = 540 - высота).
+// X прикинут по референсу — двигай эти числа, если флаг стоит не там.
+const FLAG = {
+  stockX: 201,  stockBottom:  540 - 331, // флагшток: низ на высоте 331 → y=209
+  bannerX: 222, bannerBottom: 540 - 267, // полотно: левый-низ на высоте 267 → y=273
+};
 
 // ── состояние ──────────────────────────────────────────────────────
 let demons = [], puddles = [], particles = [], floaties = [], cyclopes = [], shockwaves = [];
@@ -55,6 +80,7 @@ function spawnDemon(type){
     grounded: true,          // для драг-ударов об землю
     armed: false,            // «заряжен» броском: наносит урон, пока не коснулся земли
     hitsLeft: 0,             // сколько мобов ещё может сшибить за этот бросок (скилл «Таран»)
+    cycHit: 0,               // таймер: недавно отскочил от циклопа (защита от болтанки между двумя)
     flip: Math.random()<.5,
   };
   d.y = GROUND_Y - sizeOf(d);
@@ -273,6 +299,7 @@ function castSpell(hs, vx, vy){
       vx: Math.cos(a)*CFG.spells.lightning.speed,
       vy: Math.sin(a)*CFG.spells.lightning.speed,
       life: 3,
+      hitCyc: [], // циклопы, которых эта молния уже задела (чтобы не бить каждый кадр)
     });
     sfx.zap();
   } else if(id === 'boulder'){
@@ -280,18 +307,23 @@ function castSpell(hs, vx, vy){
     boulders.push({ x: hs.x, y: hs.y, vx: vx*B.throwF, vy: vy*B.throwF, rot: 0 });
     sfx.throw();
   } else if(id === 'wind'){
-    castWind(vx >= 0 ? 1 : -1);
+    castWind(vx, vy);
   }
 }
 
-function castWind(dir){
+// порыв ветра вдоль вектора броска (vx, vy)
+function castWind(vx, vy){
   sfx.wind();
-  shake = Math.max(shake, 4);
-  for(let i = 0; i < 26; i++){
+  shake = Math.max(shake, 5);
+  const len = Math.hypot(vx, vy) || 1;
+  const nx = vx/len, ny = vy/len; // направление броска (единичный вектор)
+  const P = CFG.spells.wind.push;
+  // визуальные потоки летят в ту же сторону
+  for(let i = 0; i < 30; i++){
+    const spd = rnd(700, 1100);
     windStreaks.push({
-      x: dir > 0 ? rnd(-W*0.3, W*0.6) : rnd(W*0.4, W*1.3),
-      y: rnd(40, GROUND_Y - 6),
-      spd: rnd(600, 1000)*dir, life: rnd(.35, .7),
+      x: rnd(0, W), y: rnd(40, GROUND_Y - 6),
+      vx: nx*spd, vy: ny*spd, life: rnd(.35, .7),
     });
   }
   for(const d of demons){
@@ -303,9 +335,11 @@ function castWind(dir){
       continue;
     }
     d.state = 'fly';
-    d.vx = d.vx*0.2 + CFG.spells.wind.push * dir * rnd(.7, 1.3);
-    d.vy = -rnd(60, 180);
-    d.rotV = rnd(-2, 2);
+    // лёгких сдувает сильнее тяжёлых
+    const w = d.type === 'small' ? 1.4 : d.type === 'big' ? 0.8 : 1;
+    d.vx = nx * P * w * rnd(.85, 1.15);
+    d.vy = ny * P * w * rnd(.85, 1.15) - 120; // небольшой подброс, чтобы красиво летели
+    d.rotV = rnd(-6, 6);
     d.armed = false; d.hitsLeft = 0; d.noDmg = true; d.grounded = false;
   }
   for(const c of cyclopes){
@@ -436,6 +470,7 @@ let last = 0;
 function loop(ts){
   const dt = Math.min(.033, (ts-last)/1000 || .016);
   last = ts;
+  updateClouds(dt); // плывут всегда, даже в меню и на паузе
   if(running && !choosing) update(dt);
   draw();
   requestAnimationFrame(loop);
@@ -467,6 +502,7 @@ function update(dt){
     if(!demons.includes(d)) continue;
     d.t += dt;
     if(d.flash > 0) d.flash -= dt;
+    if(d.cycHit > 0) d.cycHit -= dt;
     const s = sizeOf(d);
 
     if(d.state === 'walk'){
@@ -558,12 +594,14 @@ function update(dt){
           const dmg = Math.max(1, Math.min(cap, Math.round(d.hp * sp3 / CFG.cyclops.eyeDmgDiv) + sk('throwDmg')));
           hitCyclops(c, dmg);
           splat(d, sp3); // сам моб разбивается о глаз
-        } else {
-          // корпус — демон просто отскакивает, урона нет
+        } else if(d.cycHit <= 0){
+          // корпус — демон отскакивает в сторону, урона нет.
+          // НЕ толкаем вверх (иначе зависает в воздухе) и ставим таймер,
+          // чтобы между двумя циклопами не было бесконечной болтанки и стука.
           const fromLeft = d.x+s/2 < c.x+CYC_W/2;
           d.x = fromLeft ? c.x - s + CYC_PX : c.x + CYC_W - CYC_PX;
           d.vx = (fromLeft ? -1 : 1) * Math.max(120, Math.abs(d.vx)*0.45);
-          d.vy = Math.min(d.vy, -100);
+          d.cycHit = 0.25;
           sfx.thud();
         }
         break;
@@ -628,6 +666,15 @@ function update(dt){
         hurt(o, CFG.spells.lightning.pierceDmg, 800); // пролетает насквозь, не останавливаясь
       }
     }
+    // урон циклопу при прохождении через глаз (насквозь, но один раз на циклопа)
+    for(const c of [...cyclopes]){
+      if(b.hitCyc.includes(c)) continue;
+      const dEye = Math.hypot(b.x - (c.x+CYC_EYE.x), b.y - (c.y+CYC_EYE.y));
+      if(dEye < CYC_EYE.r + CFG.spells.lightning.pierceR){
+        hitCyclops(c, CFG.spells.lightning.eyeDmg);
+        b.hitCyc.push(c);
+      }
+    }
     // искра-след
     particles.push({x:b.x, y:b.y, vx:rnd(-40,40), vy:rnd(-40,40),
       col:'#ffd000', life:.2, size:2});
@@ -689,7 +736,7 @@ function update(dt){
 
   // ── потоки ветра ──
   for(const ws of [...windStreaks]){
-    ws.x += ws.spd*dt; ws.life -= dt;
+    ws.x += ws.vx*dt; ws.y += ws.vy*dt; ws.life -= dt;
     if(ws.life <= 0) windStreaks.splice(windStreaks.indexOf(ws),1);
   }
 
@@ -747,15 +794,51 @@ function update(dt){
 // ── отрисовка ──────────────────────────────────────────────────────
 function draw(){
   cx.save();
-  if(shake>0) cx.translate(rnd(-shake,shake), rnd(-shake,shake));
+  // трясём камеру только во время игры: иначе на экране поражения тряска
+  // может «замереть» ненулевой (gameOver зовётся посреди кадра обновления)
+  if(running && shake>0) cx.translate(rnd(-shake,shake), rnd(-shake,shake));
 
-  cx.fillStyle = '#dfe1f4'; cx.fillRect(-20,-20,W+40,H+40);
-  cx.strokeStyle = 'rgba(26,22,38,.25)'; cx.lineWidth = 2;
-  drawCloud(430, 90); drawCloud(700, 140); drawCloud(260, 170);
+  // — небо — (overscan ±20px, чтобы тряска камеры не оголяла края)
+  if(art.sky){
+    cx.drawImage(art.sky, -20, -20, W+40, H+40);
+  } else {
+    cx.fillStyle = '#dfe1f4'; cx.fillRect(-20,-20,W+40,H+40);
+  }
 
-  cx.fillStyle = '#2e8b8b'; cx.fillRect(-20, GROUND_Y, W+40, H-GROUND_Y+20);
-  cx.fillStyle = 'rgba(0,0,0,.12)'; cx.fillRect(-20, GROUND_Y, W+40, 5);
+  // — облака — (плывут; позиции обновляет updateClouds)
+  let anyCloud = false;
+  for(const c of clouds){
+    const img = art[c.key];
+    if(img){ cx.drawImage(img, Math.round(c.x), c.y); anyCloud = true; }
+  }
+  if(!anyCloud){
+    cx.strokeStyle = 'rgba(26,22,38,.25)'; cx.lineWidth = 2;
+    drawCloud(430, 90); drawCloud(700, 140); drawCloud(260, 170);
+  }
 
+  // — гора/замок — прижат к земле, левый край у x=0.
+  // Размер берётся из самой картинки, поэтому рисуй её 1:1 в нужных пикселях.
+  if(art.castle){
+    cx.drawImage(art.castle, 0, GROUND_Y - art.castle.height + CASTLE_SINK, art.castle.width, art.castle.height);
+  } else {
+    drawMountain();
+  }
+
+  // — флаг: флагшток (жёсткий) + полотно (колышется) — координаты в FLAG вверху файла
+  if(art.flagstock){
+    cx.drawImage(art.flagstock, FLAG.stockX, FLAG.stockBottom - art.flagstock.height);
+  }
+  drawBanner();
+
+  // — земля — рисуется ПОВЕРХ замка, закрывает его базу (стык со стеной)
+  if(art.ground){
+    cx.drawImage(art.ground, -20, GROUND_Y, W+40, H-GROUND_Y+20);
+  } else {
+    cx.fillStyle = '#2e8b8b'; cx.fillRect(-20, GROUND_Y, W+40, H-GROUND_Y+20);
+    cx.fillStyle = 'rgba(0,0,0,.12)'; cx.fillRect(-20, GROUND_Y, W+40, 5);
+  }
+
+  // лужи и взрывные волны — лежат на земле
   for(const pl of puddles){
     cx.globalAlpha = Math.min(1, pl.life)*0.9;
     cx.fillStyle = pl.col;
@@ -768,7 +851,6 @@ function draw(){
     cx.fill();
     cx.globalAlpha = 1;
   }
-
   for(const wv of shockwaves){
     cx.globalAlpha = Math.max(0, Math.min(1, wv.life*2.5));
     cx.strokeStyle = '#fffdf5';
@@ -779,7 +861,8 @@ function draw(){
     cx.globalAlpha = 1;
   }
 
-  drawMountain();
+  // — трава — поверх земли, качается «волной ветра» вдоль линии земли
+  drawGrass();
 
   for(const c of cyclopes){
     // тень
@@ -860,15 +943,23 @@ function draw(){
     }
   }
 
-  // молнии — яркая черта по направлению полёта
+  // молнии — крупный светящийся снаряд с хвостом
   for(const b of bolts){
-    const dx = b.vx*0.018, dy = b.vy*0.018;
-    cx.globalAlpha = .5;
-    cx.strokeStyle = '#fff7c0'; cx.lineWidth = 6;
-    cx.beginPath(); cx.moveTo(b.x-dx, b.y-dy); cx.lineTo(b.x, b.y); cx.stroke();
-    cx.globalAlpha = 1;
-    cx.strokeStyle = '#ffd000'; cx.lineWidth = 2.5;
-    cx.beginPath(); cx.moveTo(b.x-dx, b.y-dy); cx.lineTo(b.x, b.y); cx.stroke();
+    const m = Math.hypot(b.vx, b.vy) || 1;
+    const ux = b.vx/m, uy = b.vy/m;
+    const len = 54;
+    const tx = b.x - ux*len, ty = b.y - uy*len;
+    cx.lineCap = 'round';
+    // внешнее свечение
+    cx.globalAlpha = .35; cx.strokeStyle = '#fff7c0'; cx.lineWidth = 18;
+    cx.beginPath(); cx.moveTo(tx, ty); cx.lineTo(b.x, b.y); cx.stroke();
+    // яркое ядро
+    cx.globalAlpha = 1; cx.strokeStyle = '#ffd000'; cx.lineWidth = 8;
+    cx.beginPath(); cx.moveTo(tx, ty); cx.lineTo(b.x, b.y); cx.stroke();
+    // белая голова-шар
+    cx.fillStyle = '#fffdf5';
+    cx.beginPath(); cx.arc(b.x, b.y, 9, 0, Math.PI*2); cx.fill();
+    cx.lineCap = 'butt';
   }
 
   // валуны
@@ -885,13 +976,14 @@ function draw(){
     cx.restore();
   }
 
-  // потоки ветра
+  // потоки ветра — чёрточки вдоль направления порыва
   for(const ws of windStreaks){
+    const m = Math.hypot(ws.vx, ws.vy) || 1;
     cx.globalAlpha = Math.max(0, ws.life)*0.7;
     cx.strokeStyle = '#cdeef4'; cx.lineWidth = 2;
     cx.beginPath();
     cx.moveTo(ws.x, ws.y);
-    cx.lineTo(ws.x - Math.sign(ws.spd)*30, ws.y);
+    cx.lineTo(ws.x - ws.vx/m*30, ws.y - ws.vy/m*30);
     cx.stroke();
     cx.globalAlpha = 1;
   }
@@ -966,6 +1058,38 @@ function drawSpellUI(){
   cx.textAlign = 'left';
 }
 
+// полотно флага: слегка колышется. Режем на горизонтальные ломтики и сдвигаем
+// каждый по горизонтали по синусу — рябь сильнее у свободного низа, ноль у крепления к штоку.
+function drawBanner(){
+  const b = art.flagmatter;
+  if(!b) return;
+  const t = last * 0.001;
+  const x = FLAG.bannerX, yTop = FLAG.bannerBottom - b.height;
+  const SLICE = 3;
+  for(let sy = 0; sy < b.height; sy += SLICE){
+    const h = Math.min(SLICE, b.height - sy);
+    const k = sy / b.height;                       // 0 у штока (верх), 1 у низа
+    const off = Math.sin(t*2.4 + sy*0.07) * 4 * k; // чем ниже — тем сильнее
+    cx.drawImage(b, 0, sy, b.width, h, x + off, yTop + sy, b.width, h);
+  }
+}
+
+// трава: тонкая полоса вдоль земли, качается «волной ветра».
+// Рисуем вертикальными ломтиками, каждый сдвинут по горизонтали
+// по синусу от своего x и времени — по траве бежит рябь.
+function drawGrass(){
+  const g = art.grass;
+  if(!g) return;
+  const t = last * 0.001;
+  const yTop = GROUND_Y - g.height; // низ травы — ровно на линии земли
+  const SLICE = 8;
+  for(let sx = 0; sx < g.width; sx += SLICE){
+    const w = Math.min(SLICE, g.width - sx);
+    const off = Math.sin(t*1.8 + sx*0.035) * 2.5; // сдвиг ломтика вбок
+    cx.drawImage(g, sx, 0, w, g.height, sx + off, yTop, w + 1, g.height);
+  }
+}
+
 function drawCloud(x,y){
   cx.beginPath();
   cx.moveTo(x,y);
@@ -1006,6 +1130,15 @@ const ovText = document.getElementById('ov-text');
 const ovScore = document.getElementById('ov-score');
 const startBtn = document.getElementById('startBtn');
 
+// кнопка звука (слева внизу)
+const muteBtn = document.getElementById('muteBtn');
+muteBtn.addEventListener('click', () => {
+  const m = toggleMute();
+  muteBtn.textContent = m ? '🔇' : '🔊';
+  muteBtn.classList.toggle('muted', m);
+  muteBtn.blur(); // снять фокус, чтобы пробел/Enter не «нажимали» кнопку снова
+});
+
 function start(){
   demons=[]; puddles=[]; particles=[]; floaties=[]; cyclopes=[]; shockwaves=[];
   bolts=[]; boulders=[]; windStreaks=[]; heldSpell=null;
@@ -1023,6 +1156,7 @@ function start(){
 function gameOver(){
   running = false; held = null; heldSpell = null;
   choosing = false; pendingLevels = 0;
+  shake = 0; // игра остановилась — гасим тряску, иначе экран дёргается на экране поражения
   lvlOverlay.classList.add('hidden');
   cv.classList.remove('grabbing');
   ovTitle.textContent = 'Гора пала…';

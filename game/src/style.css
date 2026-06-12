@@ -3,9 +3,9 @@
   --ink:#1a1626; --ui:#fffdf5;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
-html,body{height:100%;overflow:hidden;background:#6b6878;}
+html,body{height:100%;overflow:hidden;background:#14121c;}
 body{display:flex;align-items:center;justify-content:center;font-family:monospace;}
-#wrap{position:relative;}
+#wrap{position:relative;transform-origin:center center;}
 canvas{
   display:block;
   image-rendering:pixelated;
@@ -53,5 +53,22 @@ canvas.grabbing{cursor:grabbing;}
 }
 #overlay button:hover{background:#3aa3a3;}
 #overlay button:focus-visible{outline:3px dashed var(--ui);outline-offset:3px;}
+#muteBtn{
+  position:absolute;left:12px;bottom:14px;z-index:5;
+  font-family:monospace;font-size:18px;line-height:1;
+  width:40px;height:40px;padding:0;
+  background:rgba(255,253,245,.85);color:var(--ink);
+  border:2px solid var(--ink);cursor:pointer;
+}
+#muteBtn:hover{background:#ffd76a;}
+#muteBtn.muted{opacity:.55;}
+#fsBtn{
+  position:fixed;right:12px;top:12px;z-index:10;
+  font-family:monospace;font-size:20px;line-height:1;
+  width:40px;height:40px;padding:0;
+  background:rgba(255,253,245,.85);color:var(--ink);
+  border:2px solid var(--ink);cursor:pointer;
+}
+#fsBtn:hover{background:#ffd76a;}
 .hidden{display:none !important;}
 .bigscore{font-size:22px;color:#ffd76a;letter-spacing:2px;}

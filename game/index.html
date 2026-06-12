@@ -8,7 +8,7 @@
 </head>
 <body>
 <div id="wrap">
-  <canvas id="game" width="960" height="560"></canvas>
+  <canvas id="game" width="960" height="540"></canvas>
   <div id="hud">
     <div>
       <div class="pill">Раздавлено: <span id="score">0</span></div>
@@ -23,6 +23,7 @@
       <div id="hpbar"><div id="hpfill"></div></div>
     </div>
   </div>
+  <button id="muteBtn" title="Звук вкл/выкл">🔊</button>
   <div id="overlay">
     <h1 id="ov-title">Штурм горы</h1>
     <p id="ov-text">Хватай демонов и швыряй! Здоровяков впечатывай в землю.<br>
@@ -38,6 +39,7 @@
     <div id="skillCards"></div>
   </div>
 </div>
+<button id="fsBtn" title="Полный экран">⛶</button>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

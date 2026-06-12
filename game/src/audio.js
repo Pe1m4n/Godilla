@@ -7,7 +7,13 @@
 // ────────────────────────────────────────────────────────────────────
 
 let AC = null;
+let muted = false;
+// переключатель звука (зовётся из кнопки в game.js). Возвращает новое состояние.
+export function toggleMute(){ muted = !muted; return muted; }
+export function isMuted(){ return muted; }
+
 function beep(freq, dur, type = 'square', vol = 0.08){
+  if(muted) return;
   try{
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
     const o = AC.createOscillator(), g = AC.createGain();
