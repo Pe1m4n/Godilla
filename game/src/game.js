@@ -10,6 +10,11 @@ const cv = document.getElementById('game');
 const cx = cv.getContext('2d');
 cx.imageSmoothingEnabled = false;
 
+// Пиксельный шрифт для текста на канвасе. Размеры — только кратные 8
+// (нативная сетка Press Start 2P): иначе глифы попадают между пикселями
+// холста 960×540 и мылятся при растягивании на весь экран.
+const FONT = '"Press Start 2P", monospace';
+
 const W = cv.width, H = cv.height;
 const GROUND_Y = H - 130;
 const MOUNTAIN_X = 195;          // где демоны/циклоп упираются во врата Асгарда (правый край стены)
@@ -1128,10 +1133,11 @@ function draw(){
     cx.fillRect(c.x+1, c.y-15, (CYC_W-2)*Math.max(0, c.hp/CFG.cyclops.hp), 5);
     // замер от ветра
     if(c.freeze > 0){
-      cx.fillStyle='#9adfe8'; cx.font='14px monospace';
-      cx.fillText('✶', c.x+CYC_W/2-16, c.y-22);
-      cx.fillText('✶', c.x+CYC_W/2+10, c.y-28);
-      cx.font='10px monospace';
+      // '*' вместо '✶': звёздочки-дингбаты в пиксельном шрифте отсутствуют,
+      // и браузер рисовал бы их запасным сглаженным шрифтом — снова мыло
+      cx.fillStyle='#9adfe8'; cx.font='16px '+FONT;
+      cx.fillText('*', c.x+CYC_W/2-16, c.y-22);
+      cx.fillText('*', c.x+CYC_W/2+10, c.y-28);
     }
   }
 
@@ -1172,9 +1178,9 @@ function draw(){
       cx.fillRect(d.x+1, d.y-8, (bw-2)*(d.hp/TYPES.big.hp), bh-2);
     }
     if(d.state==='stun'){
-      cx.fillStyle='#ffd76a'; cx.font='10px monospace';
-      cx.fillText('✶', d.x+s/2-14, d.y-4);
-      cx.fillText('✶', d.x+s/2+8, d.y-8);
+      cx.fillStyle='#ffd76a'; cx.font='8px '+FONT;
+      cx.fillText('*', d.x+s/2-14, d.y-4);
+      cx.fillText('*', d.x+s/2+8, d.y-8);
     }
   }
 
@@ -1214,11 +1220,16 @@ function draw(){
     cx.globalAlpha = 1;
   }
 
-  cx.font = 'bold 16px monospace'; cx.textAlign='center';
+  // координаты округляем: текст на дробных позициях сглаживается по краям,
+  // и после растягивания холста края выглядят грязно
+  cx.font = '16px '+FONT; cx.textAlign='center';
   for(const f of floaties){
-    cx.globalAlpha = Math.max(0,f.life);
+    // почти весь срок текст полностью непрозрачный, гаснет только в конце
+    // (раньше alpha = life, и надпись бледнела с первого же кадра;
+    // к тому же life > 1 канвас игнорирует — alpha оставалась от прошлой отрисовки)
+    cx.globalAlpha = Math.max(0, Math.min(1, f.life*3));
     cx.fillStyle = f.col || '#1a1626';
-    cx.fillText(f.txt, f.x, f.y);
+    cx.fillText(f.txt, Math.round(f.x), Math.round(f.y));
     cx.globalAlpha = 1;
   }
   cx.textAlign='left';
@@ -1261,9 +1272,10 @@ function drawGodRays(){
 function drawSpellUI(){
   const tNow = last * 0.001;
   cx.textAlign = 'center';
-  cx.font = '10px monospace';
+  cx.font = '8px '+FONT;
   cx.fillStyle = 'rgba(26,22,38,.65)';
-  cx.fillText('ЗАКЛИНАНИЯ — ХВАТАЙ И БРОСАЙ', W/2, SLOT_Y - 8);
+  // дефис вместо длинного тире: тире в Press Start 2P нет, рисовалось бы запасным шрифтом
+  cx.fillText('ЗАКЛИНАНИЯ - ХВАТАЙ И БРОСАЙ', W/2, SLOT_Y - 8);
   spellSlots.forEach((s, i) => {
     const x = SLOT_X + i*(SLOT + SLOT_GAP), y = SLOT_Y;
     const ready = s.cd <= 0;
@@ -1288,9 +1300,9 @@ function drawSpellUI(){
       cx.fillStyle = 'rgba(26,22,38,.45)';
       cx.fillRect(x, y+SLOT-hgt, SLOT, hgt);
       cx.fillStyle = '#fffdf5';
-      cx.font = 'bold 16px monospace';
+      cx.font = '16px '+FONT;
       cx.fillText(Math.ceil(s.cd), x+SLOT/2, y+SLOT/2+5);
-      cx.font = '10px monospace';
+      cx.font = '8px '+FONT;
     }
     cx.fillStyle = '#1a1626';
     cx.fillText(SPELL_NAMES[s.id], x+SLOT/2, y+SLOT+11);
