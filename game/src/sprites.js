@@ -1,6 +1,6 @@
 import {
   DEMON_MAP, PALS_SMALL, PALS_BIG, PALS_HUGE,
-  CYC_MAP, CYC_PAL,
+  CYC_MAP, CYC_PAL, SPELL_MAPS, SPELL_PALS,
 } from './config.js';
 
 // ────────────────────────────────────────────────────────────────────
@@ -46,3 +46,7 @@ export const SPRITES = {
 };
 
 export const CYC_SPRITE = bake(CYC_MAP, CYC_PAL);
+
+export const SPELL_SPRITES = Object.fromEntries(
+  Object.entries(SPELL_MAPS).map(([k, m]) => [k, bake(m, SPELL_PALS[k])])
+);

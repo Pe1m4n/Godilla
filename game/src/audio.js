@@ -26,4 +26,7 @@ export const sfx = {
   hurt:  () => { beep(220, .1, 'sawtooth', .1); },
   reach: () => beep(110, .3, 'square', .1),
   thud:  () => beep(200, .06, 'triangle', .06),
+  zap:   () => { beep(1400, .1, 'sawtooth', .07); beep(700, .18, 'square', .06); },
+  boom:  () => { beep(120, .25, 'sawtooth', .12); beep(60, .35, 'triangle', .1); },
+  wind:  () => { beep(500, .35, 'sine', .07); beep(320, .45, 'sine', .05); },
 };
