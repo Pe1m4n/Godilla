@@ -1,8 +1,8 @@
 import {
   CFG, GRAV, TYPES, SPD_LIGHT, SPD_MED, SPD_HARD,
-  PALS, CYC_PAL, CYC_PX, CYC_W, CYC_H, CYC_EYE, SPELL_NAMES,
+  PALS, CYC_PAL, CYC_PX, CYC_W, CYC_H, CYC_EYE,
 } from './config.js';
-import { SPRITES, CYC_SPRITE, SPELL_SPRITES } from './sprites.js';
+import { SPRITES, CYC_SPRITE, SPELL_SPRITES, HORN_SPRITE } from './sprites.js';
 import { sfx, toggleMute } from './audio.js';
 import { art } from './assets.js';
 
@@ -15,27 +15,49 @@ const GROUND_Y = H - 130;
 const MOUNTAIN_X = 195;          // где демоны/циклоп упираются во врата Асгарда (правый край стены)
 const CASTLE_SINK = 6;           // на сколько пикселей опустить замок ниже линии земли
 
-// слоты заклинаний — внизу экрана по центру
-const SLOT = CFG.spells.slotSize, SLOT_GAP = 16;
-const SLOT_X = (W - (SLOT*3 + SLOT_GAP*2)) / 2;
-const SLOT_Y = H - SLOT - 18;
-
 // размер моба в пикселях экрана
 const sizeOf = d => 9 * TYPES[d.type].px;
 
 // ── облака: плывут на фоне (x,y в дизайн-координатах, spd — px/сек, минус = влево) ──
+// charge: null | 'storm' — заряженную грозовую тучу можно кликнуть (см. triggerCloud)
 const clouds = [
-  { key:'cloud1', x: 240, y: 64,  spd: -9  },
-  { key:'cloud2', x: 560, y: 120, spd: -6  },
-  { key:'cloud3', x: 830, y: 52,  spd: -12 },
+  { key:'cloud1', x: 240, y: 64,  spd: -9,  charge:null, chargeT:0 },
+  { key:'cloud2', x: 560, y: 120, spd: -6,  charge:null, chargeT:0 },
+  { key:'cloud3', x: 830, y: 52,  spd: -12, charge:null, chargeT:0 },
 ];
+let nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
+const cloudW = c => art[c.key] ? art[c.key].width  : 210;
+const cloudH = c => art[c.key] ? art[c.key].height : 90;
 function updateClouds(dt){
   for(const c of clouds){
-    const w = art[c.key] ? art[c.key].width : 210;
+    const w = cloudW(c);
     c.x += c.spd * dt;
     if(c.x + w < -40) c.x = W + 40;       // уплыло влево — заводим справа
     else if(c.x > W + 40) c.x = -w - 40;
+    if(c.charge){ c.chargeT -= dt; if(c.chargeT <= 0) c.charge = null; }
   }
+  // время от времени заряжаем одно из спокойных облаков (только в бою)
+  if(running && !choosing){
+    nextCharge -= dt;
+    if(nextCharge <= 0){
+      const idle = clouds.filter(c => !c.charge);
+      if(idle.length){
+        const c = idle[(Math.random()*idle.length)|0];
+        c.charge = 'storm';
+        c.chargeT = CFG.sky.hold;
+        floaties.push({ x: c.x + cloudW(c)/2, y: c.y + cloudH(c)/2,
+          txt: 'ГРОЗА — КЛИКНИ!', life: 1.8, col: '#2a3a7a' });
+      }
+      nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
+    }
+  }
+}
+
+// клик по грозовой туче: бьёт молнией строго вниз
+function triggerCloud(c){
+  const cxp = c.x + cloudW(c)/2, cyp = c.y + cloudH(c)*0.6;
+  castLightning(cxp, cyp, 0, 1);
+  c.charge = null; c.chargeT = 0;
 }
 
 // ── раскладка флага (тюнинг) ──
@@ -89,8 +111,10 @@ const GRAIN = {
 // ── состояние ──────────────────────────────────────────────────────
 let demons = [], puddles = [], particles = [], floaties = [], cyclopes = [], shockwaves = [];
 let bolts = [], boulders = [], windStreaks = [];
-let spellSlots = [{id:'lightning', cd:0}, {id:'boulder', cd:0}, {id:'wind', cd:0}];
-let heldSpell = null; // заклинание в руке: {id, slot, x, y}
+let heldBoulder = null; // отобранный у носильщика валун в руке: {x, y}
+let hornCd = 0;         // перезарядка Рога Гьяллархорн (0 — готов)
+// Рог на стене врат — кликабельная зона (экранные координаты)
+const HORN = { x: 96, y: 300, r: 24 };
 let score = 0, hp = 100;
 let waveIdx = 0, spawnQueue = [], spawnTimer = 0, betweenTimer = 0, curEvery = 1.5;
 let player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
@@ -123,6 +147,7 @@ function spawnDemon(type){
     armed: false,            // «заряжен» броском: наносит урон, пока не коснулся земли
     hitsLeft: 0,             // сколько мобов ещё может сшибить за этот бросок (скилл «Таран»)
     cycHit: 0,               // таймер: недавно отскочил от циклопа (защита от болтанки между двумя)
+    hasBoulder: type === 'roller', // носильщик идёт с валуном, пока его не отобрали
     flip: Math.random()<.5,
   };
   d.y = GROUND_Y - sizeOf(d);
@@ -185,6 +210,24 @@ function splat(d, sp){
   if (big) floaties.push({x:px, y:py-44, txt:'+'+pts, life:1.2, col:'#b8860b'});
   if (held === d) { held = null; cv.classList.remove('grabbing'); }
   demons.splice(demons.indexOf(d),1);
+  if (d.type === 'bomber') bomberBoom(px, py); // рвануло — задевает соседей
+}
+
+// взрыв бомбера: урон по площади всем мобам рядом (возможна цепная реакция)
+function bomberBoom(x, y){
+  const T = TYPES.bomber;
+  sfx.boom();
+  shake = Math.max(shake, 12);
+  shockwaves.push({x, y: GROUND_Y, r: 10, max: T.boomR, life: .4});
+  for(let i = 0; i < 24; i++){
+    particles.push({x, y, vx:rnd(-300,300), vy:rnd(-460,-40),
+      col: i%2 ? '#ffcf3a' : '#c0392b', life:rnd(.3,.7), size:rnd(2,5)});
+  }
+  for(const o of [...demons]){
+    if(o.state==='held' || o.state==='offscreen' || !demons.includes(o)) continue;
+    const os = sizeOf(o);
+    if(Math.hypot(o.x+os/2 - x, o.y+os/2 - y) <= T.boomR) hurt(o, T.boomDmg, 600);
+  }
 }
 
 function reachMountain(d){
@@ -330,57 +373,35 @@ function pickSkill(id){
   mouse.px = mouse.x; mouse.py = mouse.y; mouse.vx = mouse.vy = 0;
 }
 
-// ── заклинания ─────────────────────────────────────────────────────
-// индекс слота под точкой (или -1)
-function slotAt(x, y){
-  for(let i = 0; i < spellSlots.length; i++){
-    const sx = SLOT_X + i*(SLOT + SLOT_GAP);
-    if(x > sx && x < sx+SLOT && y > SLOT_Y && y < SLOT_Y+SLOT) return i;
-  }
-  return -1;
-}
+// ── заклинания: применяются как события мира (см. triggerCloud / носильщик валуна) ──
 
-function castSpell(hs, vx, vy){
-  const id = hs.id;
-  if(id === 'lightning'){
-    castLightning(hs.x, hs.y, vx, vy);
-  } else if(id === 'boulder'){
-    const B = CFG.spells.boulder;
-    boulders.push({ x: hs.x, y: hs.y, vx: vx*B.throwF, vy: vy*B.throwF, rot: 0 });
-    sfx.throw();
-  } else if(id === 'wind'){
-    castWind(vx, vy);
-  }
-}
-
-// порыв ветра вдоль вектора броска (vx, vy)
-function castWind(vx, vy){
+// Рог Гьяллархорн: трубит и подбрасывает орду вверх (вертикальный порыв, слабо вбок от врат)
+function blowHorn(){
+  hornCd = CFG.horn.cd;
+  const HN = CFG.horn;
   sfx.wind();
-  shake = Math.max(shake, 5);
-  const len = Math.hypot(vx, vy) || 1;
-  const nx = vx/len, ny = vy/len; // направление броска (единичный вектор)
-  const P = CFG.spells.wind.push;
-  // визуальные потоки летят в ту же сторону
-  for(let i = 0; i < 30; i++){
-    const spd = rnd(700, 1100);
+  shake = Math.max(shake, 7);
+  // визуальные струи взмывают вверх над полем
+  for(let i = 0; i < 34; i++){
     windStreaks.push({
-      x: rnd(0, W), y: rnd(40, GROUND_Y - 6),
-      vx: nx*spd, vy: ny*spd, life: rnd(.35, .7),
+      x: rnd(MOUNTAIN_X, W), y: rnd(GROUND_Y - 12, GROUND_Y),
+      vx: rnd(20, 160), vy: -rnd(520, 900), life: rnd(.4, .8),
     });
   }
   for(const d of demons){
     if(d.state === 'held' || d.state === 'offscreen') continue;
     if(TYPES[d.type].liftable === false){
-      // неподъёмные не сдвигаются — просто замирают
+      // неподъёмные не взлетают — просто замирают
       d.state = 'stun'; d.stun = Math.max(d.stun, CFG.spells.wind.stun);
       d.vx = d.vy = 0; d.rot = 0;
       continue;
     }
     d.state = 'fly';
-    // лёгких сдувает сильнее тяжёлых
-    const w = d.type === 'small' ? 1.4 : d.type === 'big' ? 0.8 : 1;
-    d.vx = nx * P * w * rnd(.85, 1.15);
-    d.vy = ny * P * w * rnd(.85, 1.15) - 120; // небольшой подброс, чтобы красиво летели
+    // лёгких подбрасывает выше тяжёлых
+    const w = (d.type==='small'||d.type==='dog') ? 1.4
+            : (d.type==='huge') ? 0.6 : 0.85;
+    d.vx = HN.push * w * rnd(.5, 1.0);          // вправо, от врат — слабо
+    d.vy = -HN.lift * w * rnd(.85, 1.15);       // вверх — сильно
     d.rotV = rnd(-6, 6);
     // заряжаем как при броске рукой: впечатавшись в землю на скорости — получат урон
     d.armed = true; d.hitsLeft = sk('collide'); d.noDmg = false; d.grounded = false;
@@ -537,14 +558,35 @@ function onDown(e){
   const p = ptr(e);
   mouse.x = mouse.px = p.x; mouse.y = mouse.py = p.y;
   mouse.vx = mouse.vy = 0;
-  // сперва слоты заклинаний
-  const si = slotAt(p.x, p.y);
-  if(si !== -1 && spellSlots[si].cd <= 0 && !held){
-    heldSpell = { id: spellSlots[si].id, slot: si, x: p.x, y: p.y };
-    cv.classList.add('grabbing');
-    sfx.grab();
+  // 0) клик по готовому Рогу — порыв ветра, подбрасывающий орду
+  if(hornCd <= 0 && Math.hypot(p.x - HORN.x, p.y - HORN.y) <= HORN.r){
+    blowHorn();
     e.preventDefault();
     return;
+  }
+  // 1) клик по заряженному облаку — грозовое событие
+  for(const c of clouds){
+    if(!c.charge) continue;
+    if(p.x >= c.x && p.x <= c.x+cloudW(c) && p.y >= c.y && p.y <= c.y+cloudH(c)){
+      triggerCloud(c);
+      e.preventDefault();
+      return;
+    }
+  }
+  // 2) хватаешь носильщика — отбираешь у него валун (а не поднимаешь его самого)
+  for(const d of demons){
+    if(d.type !== 'roller' || !d.hasBoulder || d.state !== 'walk') continue;
+    const s = sizeOf(d);
+    const dist = Math.hypot(p.x-(d.x+s/2), p.y-(d.y+s/2));
+    if(dist < TYPES.roller.grabR * (1 + CFG.skills.grip.mult * sk('grip'))){
+      heldBoulder = { x: p.x, y: p.y };
+      d.hasBoulder = false;
+      cv.classList.add('grabbing');
+      sfx.grab();
+      floaties.push({x:d.x+s/2, y:d.y-10, txt:'ВАЛУН!', life:1, col:'#7e828c'});
+      e.preventDefault();
+      return;
+    }
   }
   let best=null, bd=1e9;
   for(const d of demons){
@@ -582,16 +624,16 @@ function onDown(e){
 function onMove(e){
   const p = ptr(e);
   mouse.x = p.x; mouse.y = p.y;
-  if(held || heldSpell) e.preventDefault();
+  if(held || heldBoulder) e.preventDefault();
 }
 function onUp(){
-  if(heldSpell){
-    const sp = Math.hypot(mouse.vx, mouse.vy);
-    if(sp >= CFG.spells.cancelSpeed){
-      castSpell(heldSpell, mouse.vx, mouse.vy);
-      spellSlots[heldSpell.slot].cd = CFG.spells[heldSpell.id].cd;
-    } // иначе — просто вернулось в слот
-    heldSpell = null;
+  if(heldBoulder){
+    // метаем отобранный валун по вектору броска (вялый бросок — просто роняем)
+    const B = CFG.spells.boulder;
+    boulders.push({ x: heldBoulder.x, y: heldBoulder.y,
+      vx: mouse.vx * B.throwF, vy: mouse.vy * B.throwF, rot: 0 });
+    sfx.throw();
+    heldBoulder = null;
     cv.classList.remove('grabbing');
     return;
   }
@@ -821,12 +863,13 @@ function update(dt){
     }
   }
 
-  // ── заклинания: перезарядка и предмет в руке ──
-  for(const s of spellSlots) if(s.cd > 0) s.cd -= dt;
-  if(heldSpell){
-    heldSpell.x += (mouse.x - heldSpell.x) * Math.min(1, dt*20);
-    heldSpell.y += (mouse.y - heldSpell.y) * Math.min(1, dt*20);
+  // ── отобранный валун тянется за курсором ──
+  if(heldBoulder){
+    heldBoulder.x += (mouse.x - heldBoulder.x) * Math.min(1, dt*22);
+    heldBoulder.y += (mouse.y - heldBoulder.y) * Math.min(1, dt*22);
   }
+  // ── перезарядка Рога ──
+  if(hornCd > 0) hornCd = Math.max(0, hornCd - dt);
 
   // ── молнии (мгновенный разряд — только гаснущая вспышка) ──
   for(const b of [...bolts]){
@@ -973,6 +1016,7 @@ function draw(){
   for(const c of clouds){
     const img = art[c.key];
     if(img){ cx.drawImage(img, Math.round(c.x), c.y); anyCloud = true; }
+    if(c.charge) drawChargedCloud(c);
   }
   if(!anyCloud){
     cx.strokeStyle = 'rgba(26,22,38,.25)'; cx.lineWidth = 2;
@@ -1095,13 +1139,27 @@ function draw(){
       cx.globalAlpha = 1;
     }
     cx.restore();
-    // полоска ХП здоровяка — показываем только если он уже ранен
-    if(d.type==='big' && d.hp < TYPES.big.hp){
+    // носильщик ещё несёт валун — рисуем его над мобом
+    if(d.type==='roller' && d.hasBoulder){
+      const br = CFG.spells.boulder.r;
+      cx.drawImage(SPELL_SPRITES.boulder, d.x+s/2-br*0.8, d.y-br*1.1, br*1.6, br*1.6);
+    }
+    // бомбер — пульсирующий раскалённый фитиль
+    if(d.type==='bomber'){
+      const gl = 0.45 + 0.45*Math.sin(last*0.02);
+      cx.globalAlpha = gl;
+      cx.fillStyle = '#ffcf3a';
+      cx.beginPath(); cx.arc(d.x+s/2, d.y-3, 3, 0, Math.PI*2); cx.fill();
+      cx.globalAlpha = 1;
+    }
+    // полоска ХП крупного моба — показываем, только если он уже ранен
+    const mhp = TYPES[d.type].hp;
+    if(mhp > 1 && d.hp < mhp){
       const bw = s, bh = 4;
       cx.fillStyle = 'rgba(26,22,38,.8)';
       cx.fillRect(d.x, d.y-9, bw, bh);
       cx.fillStyle = '#c0392b';
-      cx.fillRect(d.x+1, d.y-8, (bw-2)*(d.hp/TYPES.big.hp), bh-2);
+      cx.fillRect(d.x+1, d.y-8, (bw-2)*(d.hp/mhp), bh-2);
     }
     if(d.state==='stun'){
       cx.fillStyle='#ffd76a'; cx.font='10px monospace';
@@ -1157,7 +1215,63 @@ function draw(){
 
   cx.restore();
 
-  drawSpellUI();
+  // Рог Гьяллархорн с индикацией готовности (поверх всего, без тряски)
+  if(running) drawHorn();
+
+  // отобранный валун в руке — покачивается у курсора (поверх всего, без тряски)
+  if(heldBoulder){
+    const br = CFG.spells.boulder.r;
+    cx.save();
+    cx.translate(heldBoulder.x, heldBoulder.y);
+    cx.rotate(Math.sin(last*0.01)*0.2);
+    cx.drawImage(SPELL_SPRITES.boulder, -br, -br, br*2, br*2);
+    cx.restore();
+  }
+}
+
+// Рог на стене врат: золотое сияние и покачивание, когда готов; дуга перезарядки, когда нет
+function drawHorn(){
+  const ready = hornCd <= 0;
+  const t = last * 0.001;
+  cx.save();
+  cx.translate(HORN.x, HORN.y);
+  cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  if(ready){
+    // пульсирующая золотая аура «готов — труби!»
+    const p = 0.5 + 0.5*Math.sin(t*4);
+    cx.globalAlpha = 0.3 + 0.4*p;
+    const g = cx.createRadialGradient(0, 0, 2, 0, 0, HORN.r + 14 + p*5);
+    g.addColorStop(0, 'rgba(255,225,120,0.95)');
+    g.addColorStop(1, 'rgba(255,225,120,0)');
+    cx.fillStyle = g;
+    cx.beginPath(); cx.arc(0, 0, HORN.r + 16, 0, Math.PI*2); cx.fill();
+    cx.globalAlpha = 1;
+  }
+  // диск-подложка
+  cx.fillStyle = ready ? '#2a2030' : '#191525';
+  cx.beginPath(); cx.arc(0, 0, HORN.r, 0, Math.PI*2); cx.fill();
+  cx.lineWidth = 2.5;
+  cx.strokeStyle = ready ? '#ffe14d' : '#5a5466';
+  cx.beginPath(); cx.arc(0, 0, HORN.r, 0, Math.PI*2); cx.stroke();
+  // сам рог — пиксельный спрайт (сохраняем пропорции 14:12)
+  cx.globalAlpha = ready ? 1 : 0.5;
+  const hw = 40, hh = hw * 12/14;
+  const bob = ready ? Math.sin(t*4)*1.5 : 0;
+  cx.drawImage(HORN_SPRITE, -hw/2, -hh/2 + bob, hw, hh);
+  cx.globalAlpha = 1;
+  if(ready){
+    cx.fillStyle = '#ffe14d'; cx.font = 'bold 10px monospace';
+    cx.fillText('ТРУБИ!', 0, HORN.r + 12);
+  } else {
+    // дуга перезарядки по кругу + секунды
+    const frac = 1 - hornCd / CFG.horn.cd;
+    cx.strokeStyle = '#ffe14d'; cx.lineWidth = 3;
+    cx.beginPath(); cx.arc(0, 0, HORN.r - 2, -Math.PI/2, -Math.PI/2 + frac*Math.PI*2); cx.stroke();
+    cx.fillStyle = '#fffdf5'; cx.font = 'bold 12px monospace';
+    cx.fillText(Math.ceil(hornCd), 0, HORN.r + 13);
+  }
+  cx.restore();
+  cx.textAlign = 'left'; cx.textBaseline = 'alphabetic';
 }
 
 // лучи света: вытянутые четырёхугольники от источника за облаками к замку,
@@ -1189,55 +1303,6 @@ function drawGodRays(){
 }
 
 
-// слоты заклинаний + предмет в руке (поверх всего, без тряски камеры)
-function drawSpellUI(){
-  const tNow = last * 0.001;
-  cx.textAlign = 'center';
-  cx.font = '10px monospace';
-  cx.fillStyle = 'rgba(26,22,38,.65)';
-  cx.fillText('ЗАКЛИНАНИЯ — ХВАТАЙ И БРОСАЙ', W/2, SLOT_Y - 8);
-  spellSlots.forEach((s, i) => {
-    const x = SLOT_X + i*(SLOT + SLOT_GAP), y = SLOT_Y;
-    const ready = s.cd <= 0;
-    const inHand = heldSpell && heldSpell.slot === i;
-    const hov = ready && !inHand && !heldSpell && !held &&
-      mouse.x > x && mouse.x < x+SLOT && mouse.y > y && mouse.y < y+SLOT;
-    cx.fillStyle = hov ? 'rgba(255,253,245,.95)' : 'rgba(255,253,245,.75)';
-    cx.fillRect(x, y, SLOT, SLOT);
-    // пунктирная рамка — намёк «можно взять»
-    cx.strokeStyle = '#1a1626'; cx.lineWidth = 2;
-    cx.setLineDash([5,4]);
-    cx.strokeRect(x, y, SLOT, SLOT);
-    cx.setLineDash([]);
-    if(ready && !inHand){
-      // иконка подпрыгивает, на наведении — тянется вверх
-      const bob = Math.sin(tNow*3 + i*2)*3 - (hov ? 5 : 0);
-      cx.drawImage(SPELL_SPRITES[s.id], x+SLOT/2-18, y+SLOT/2-18+bob, 36, 36);
-    }
-    if(!ready){
-      // перезарядка: тёмная шторка + секунды
-      const hgt = SLOT * Math.min(1, s.cd / CFG.spells[s.id].cd);
-      cx.fillStyle = 'rgba(26,22,38,.45)';
-      cx.fillRect(x, y+SLOT-hgt, SLOT, hgt);
-      cx.fillStyle = '#fffdf5';
-      cx.font = 'bold 16px monospace';
-      cx.fillText(Math.ceil(s.cd), x+SLOT/2, y+SLOT/2+5);
-      cx.font = '10px monospace';
-    }
-    cx.fillStyle = '#1a1626';
-    cx.fillText(SPELL_NAMES[s.id], x+SLOT/2, y+SLOT+11);
-  });
-  // заклинание в руке — покачивается у курсора
-  if(heldSpell){
-    cx.save();
-    cx.translate(heldSpell.x, heldSpell.y);
-    cx.rotate(Math.sin(tNow*10)*0.2);
-    cx.drawImage(SPELL_SPRITES[heldSpell.id], -18, -18, 36, 36);
-    cx.restore();
-  }
-  cx.textAlign = 'left';
-}
-
 // полотно флага: слегка колышется. Режем на горизонтальные ломтики и сдвигаем
 // каждый по горизонтали по синусу — рябь сильнее у свободного низа, ноль у крепления к штоку.
 function drawBanner(){
@@ -1268,6 +1333,54 @@ function drawGrass(){
     const off = Math.sin(t*1.8 + sx*0.035) * 2.5; // сдвиг ломтика вбок
     cx.drawImage(g, sx, 0, w, g.height, sx + off, yTop, w + 1, g.height);
   }
+}
+
+// тёмная версия облака (силуэт по форме картинки), кэшируется на облаке
+function darkCloudOf(c){
+  const img = art[c.key];
+  if(!img) return null;
+  if(c._dark) return c._dark;
+  const off = document.createElement('canvas');
+  off.width = img.width; off.height = img.height;
+  const g = off.getContext('2d');
+  g.drawImage(img, 0, 0);
+  g.globalCompositeOperation = 'source-in'; // заливаем только непрозрачные пиксели облака
+  g.fillStyle = '#172038';
+  g.fillRect(0, 0, off.width, off.height);
+  c._dark = off;
+  return off;
+}
+
+// грозовая туча: темнеет по своей форме + по ней пробегают электрические разряды
+function drawChargedCloud(c){
+  const w = cloudW(c), h = cloudH(c);
+  const t = last * 0.001;
+  const pulse = 0.5 + 0.5*Math.sin(t*5 + c.x);
+  const dark = darkCloudOf(c);
+  cx.save();
+  // 1) затемняем само облако (по силуэту), слегка пульсируя
+  if(dark){
+    cx.globalAlpha = 0.6 + 0.22*pulse;
+    cx.drawImage(dark, Math.round(c.x), c.y);
+  }
+  // 2) электрические разряды бегут по облаку (мерцают каждый кадр)
+  cx.globalCompositeOperation = 'lighter';
+  cx.lineJoin = cx.lineCap = 'round';
+  for(let i = 0; i < 3; i++){
+    if(Math.random() < 0.45) continue;
+    const ax = c.x + w*rnd(0.18, 0.5),  ay = c.y + h*rnd(0.3, 0.7);
+    const bx = c.x + w*rnd(0.5, 0.86),  by = c.y + h*rnd(0.3, 0.7);
+    const path = jaggedPath(ax, ay, bx, by, 7);
+    cx.globalAlpha = 0.45; cx.strokeStyle = '#9cc4ff'; cx.lineWidth = 3.5; strokePath(path);
+    cx.globalAlpha = 0.95; cx.strokeStyle = '#f4faff'; cx.lineWidth = 1.3; strokePath(path);
+  }
+  // редкая искра-вспышка внутри тучи
+  if(pulse > 0.9){
+    cx.globalAlpha = 0.5; cx.fillStyle = '#cfe2ff';
+    cx.beginPath(); cx.arc(c.x + w*0.5, c.y + h*0.5, 10, 0, Math.PI*2); cx.fill();
+  }
+  cx.restore();
+  cx.globalAlpha = 1;
 }
 
 function drawCloud(x,y){
@@ -1321,8 +1434,9 @@ muteBtn.addEventListener('click', () => {
 
 function start(){
   demons=[]; puddles=[]; particles=[]; floaties=[]; cyclopes=[]; shockwaves=[];
-  bolts=[]; boulders=[]; windStreaks=[]; heldSpell=null; skyFlash=0;
-  for(const s of spellSlots) s.cd = 0;
+  bolts=[]; boulders=[]; windStreaks=[]; heldBoulder=null; skyFlash=0; hornCd=0;
+  for(const c of clouds){ c.charge = null; c.chargeT = 0; }
+  nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
   score=0; hp=100; held=null; betweenTimer=0;
   player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
   pendingLevels = 0; choosing = false;
@@ -1334,7 +1448,7 @@ function start(){
   running = true;
 }
 function gameOver(){
-  running = false; held = null; heldSpell = null;
+  running = false; held = null; heldBoulder = null;
   choosing = false; pendingLevels = 0;
   shake = 0; // игра остановилась — гасим тряску, иначе экран дёргается на экране поражения
   lvlOverlay.classList.add('hidden');

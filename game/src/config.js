@@ -19,6 +19,22 @@ export const CFG = {
     returnDelay: 5,    // через сколько секунд вернётся в бой
   },
 
+  // Небесные события вместо нижней панели заклинаний: время от времени одно из
+  // облаков заряжается грозой или ветром. По заряженному облаку можно кликнуть:
+  // гроза — бьёт молнией вниз, ветер — сдувает орду от врат.
+  sky: {
+    chargeMin: 22,     // минимум секунд до следующей грозовой тучи (редко, как валун)
+    chargeMax: 38,     // максимум секунд
+    hold: 7,           // сколько секунд туча держит заряд, потом гаснет
+  },
+
+  // Рог Гьяллархорн на вратах: клик трубит и подбрасывает орду вверх.
+  horn: {
+    cd: 14,            // перезарядка рога, сек
+    push: 320,         // боковой толчок (слабый — чуть от врат)
+    lift: 660,         // вертикальный подброс (сильный — кидает юнитов в воздух)
+  },
+
   monsters: {
     //  px         — размер (множитель пиксельного спрайта 9x9)
     //  hp         — здоровье
@@ -36,6 +52,16 @@ export const CFG = {
              throwF: 0.175,  follow: 14, shakeHurt: 10, shakeSplat: 16 },
     huge:  { px: 6,   hp: 5, mtnDmg: 30, speedMin: 10, speedMax: 16, grabR: 50, score: 5,
              throwF: 0.1125, follow: 8,  shakeHurt: 12, shakeSplat: 20 },
+    // быстрый и хрупкий: проскакивает к вратам, надо успеть перехватить
+    dog:   { px: 2.5, hp: 1, mtnDmg: 8,  speedMin: 82, speedMax: 112, grabR: 24, score: 2,
+             throwF: 0.3,    follow: 26, shakeHurt: 5,  shakeSplat: 9 },
+    // несёт валун: схвати его — отберёшь валун и сможешь метнуть (редкий)
+    roller:{ px: 4,   hp: 3, mtnDmg: 18, speedMin: 13, speedMax: 20, grabR: 42, score: 4,
+             throwF: 0.18,   follow: 13, shakeHurt: 9,  shakeSplat: 15 },
+    // взрывается при гибели, задевая соседей; до врат лучше не пускать
+    bomber:{ px: 3.5, hp: 2, mtnDmg: 35, speedMin: 20, speedMax: 30, grabR: 32, score: 4,
+             throwF: 0.22,   follow: 16, shakeHurt: 8,  shakeSplat: 14,
+             boomDmg: 2, boomR: 95 },
   },
 
   cyclops: {
@@ -122,11 +148,11 @@ export const CFG = {
     loopSpeedup: 0.9,    // множитель интервала за каждый повтор последней волны
     minEvery: 0.45,      // чаще этого не спавнит
     list: [
-      { every: 1.5, order: ['small','small','small','small','small','small','small'] },
-      { every: 1.3, order: ['small','small','big','small','small','small','big','small','small'] },
-      { every: 1.2, order: ['big','small','small','huge','small','small','big','small','small','big','small'] },
-      { every: 1.0, order: ['small','small','cyclops','small','big','small','small','huge','small','big','small','small','big','small'] },
-      { every: 0.85, order: ['huge','small','small','big','small','cyclops','small','small','huge','big','small','small','big','small','huge','small','small','big','small'] },
+      { every: 1.5, order: ['small','small','dog','small','small','small','small'] },
+      { every: 1.3, order: ['small','dog','big','small','small','dog','big','small','small'] },
+      { every: 1.2, order: ['big','small','dog','huge','small','bomber','big','small','dog','small','big','small'] },
+      { every: 1.0, order: ['small','dog','cyclops','small','big','roller','small','huge','dog','big','bomber','small','small','big','small'] },
+      { every: 0.85, order: ['huge','small','dog','big','bomber','small','cyclops','small','dog','huge','big','roller','small','dog','big','small','huge','bomber','small','big','small'] },
     ],
   },
 };
@@ -168,7 +194,32 @@ export const PALS_HUGE = [
   {b:'#5e1212', h:'#1c0606', W:'#ffb347', m:'#140202'},
   {b:'#1f3d44', h:'#0a1b1f', W:'#9dfce0', m:'#061214'},
 ];
-export const PALS = { small: PALS_SMALL, big: PALS_BIG, huge: PALS_HUGE };
+// ── собака: быстрый четвероногий моб (профиль, мордой влево к вратам) ──
+export const DOG_MAP = [
+  ".........",
+  ".h.....b.",
+  "hWbbbbbb.",
+  "bbbbbbbbb",
+  "bbbbbbbb.",
+  "mb.bb.b..",
+  ".b..b.b..",
+  ".........",
+  ".........",
+];
+export const PALS_DOG = [
+  {b:'#6e4a2a', h:'#3a2614', W:'#ffe9a8', m:'#1c1109'}, // рыжий
+  {b:'#7a7a82', h:'#3c3c44', W:'#ffe9a8', m:'#16161a'}, // серый
+];
+// носильщик валуна — землистый, тяжёлый
+export const PALS_ROLLER = [
+  {b:'#6b5a3e', h:'#2e2516', W:'#fff0c0', m:'#171206'},
+];
+// бомбер — тёмный с раскалённым нутром
+export const PALS_BOMBER = [
+  {b:'#2a2024', h:'#c0392b', W:'#ffcf3a', m:'#0a0608'},
+];
+export const PALS = { small: PALS_SMALL, big: PALS_BIG, huge: PALS_HUGE,
+  dog: PALS_DOG, roller: PALS_ROLLER, bomber: PALS_BOMBER };
 
 // ── циклоп ─────────────────────────────────────────────────────────
 // идёт боком (в профиль), глаз смотрит влево — в сторону врат
@@ -239,3 +290,26 @@ export const SPELL_PALS = {
   wind:      {w:'#9adfe8'},
 };
 export const SPELL_NAMES = { lightning:'МОЛНИЯ', boulder:'ВАЛУН', wind:'ВЕТЕР' };
+
+// ── Рог Гьяллархорн: пиксельный спрайт (14 x 12), бель слева, тип справа ──
+export const HORN_MAP = [
+  "hhhh..........",
+  "hOOhh.........",
+  "hOObhh........",
+  "hWbbbhh.......",
+  ".hWbbbmh......",
+  ".hbbbbmbh.....",
+  "..hbbbbbbh....",
+  "..hWbbbbmbh...",
+  "...hbbbbbmbh..",
+  "...hhbbbbbbh..",
+  ".....hhbbbbhh.",
+  ".......hhhhh..",
+];
+export const HORN_PAL = {
+  b:'#e8dcc0', // костяное тело
+  W:'#fff7e6', // блик
+  h:'#4a3a26', // тёмный контур
+  m:'#d9a83a', // золотые ободки
+  O:'#2a2018', // тёмное жерло
+};
