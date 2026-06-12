@@ -46,6 +46,46 @@ const FLAG = {
   bannerX: 222, bannerBottom: 540 - 267, // полотно: левый-низ на высоте 267 → y=273
 };
 
+// ── god rays: лучи света из-за облаков, падают на замок (тюнинг) ──
+// Источник — над верхней кромкой ближе к центру экрана, как будто солнце за облаками.
+const GODRAYS = {
+  src: { x: 480, y: -70 },  // откуда светит (выше экрана)
+  color: '255, 243, 196',   // тёплый свет, r,g,b
+  alpha: 0.14,              // базовая яркость (0 — выключить)
+  sway: 10,                 // насколько гуляет точка падения, px
+  swaySpeed: 0.25,          // скорость покачивания
+  pulseSpeed: 0.5,          // скорость «дыхания» яркости
+  // x — куда падает луч (у земли), w — полуширина там, srcW — полуширина у источника
+  beams: [
+    { x: 60,  w: 58, srcW: 8, phase: 0.0 },
+    { x: 140, w: 44, srcW: 6, phase: 2.1 },
+    { x: 205, w: 32, srcW: 5, phase: 4.4 },
+  ],
+};
+
+// ── зернистость: статичный плёночный шум поверх всей картинки (тюнинг) ──
+// Живёт в DOM-слое #grain поверх игры и НЕ масштабируется вместе с холстом,
+// поэтому зерно остаётся мелким (в пикселях монитора) даже в полном экране.
+const GRAIN = {
+  opacity: 0.04, // сила зерна (0 — выключить)
+  size: 192,     // размер тайла шума, px монитора
+};
+{
+  const c = document.createElement('canvas');
+  c.width = c.height = GRAIN.size;
+  const g = c.getContext('2d');
+  const img = g.createImageData(GRAIN.size, GRAIN.size);
+  for(let i = 0; i < img.data.length; i += 4){
+    const v = (Math.random()*255)|0;
+    img.data[i] = img.data[i+1] = img.data[i+2] = v;
+    img.data[i+3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const grainEl = document.getElementById('grain');
+  grainEl.style.backgroundImage = `url(${c.toDataURL()})`;
+  grainEl.style.opacity = GRAIN.opacity;
+}
+
 // ── состояние ──────────────────────────────────────────────────────
 let demons = [], puddles = [], particles = [], floaties = [], cyclopes = [], shockwaves = [];
 let bolts = [], boulders = [], windStreaks = [];
@@ -864,6 +904,9 @@ function draw(){
   // — трава — поверх земли, качается «волной ветра» вдоль линии земли
   drawGrass();
 
+  // — лучи света из-за облаков, ложатся на замок (мобы ходят перед ними) —
+  drawGodRays();
+
   for(const c of cyclopes){
     // тень
     cx.globalAlpha = .25; cx.fillStyle = '#000';
@@ -1008,6 +1051,35 @@ function draw(){
 
   drawSpellUI();
 }
+
+// лучи света: вытянутые четырёхугольники от источника за облаками к замку,
+// с градиентом (тают к земле), мягко покачиваются и «дышат» яркостью
+function drawGodRays(){
+  if(GODRAYS.alpha <= 0) return;
+  const t = last * 0.001;
+  cx.save();
+  cx.globalCompositeOperation = 'lighter'; // свет складывается с картинкой
+  for(const b of GODRAYS.beams){
+    const sway = Math.sin(t*GODRAYS.swaySpeed + b.phase) * GODRAYS.sway;
+    const a = GODRAYS.alpha * (0.75 + 0.25*Math.sin(t*GODRAYS.pulseSpeed + b.phase));
+    const sx = GODRAYS.src.x, sy = GODRAYS.src.y;
+    const tx = b.x + sway, ty = GROUND_Y + 4;
+    const g = cx.createLinearGradient(sx, sy, tx, ty);
+    g.addColorStop(0,    `rgba(${GODRAYS.color}, ${a})`);
+    g.addColorStop(0.75, `rgba(${GODRAYS.color}, ${a*0.45})`);
+    g.addColorStop(1,    `rgba(${GODRAYS.color}, 0)`);
+    cx.fillStyle = g;
+    cx.beginPath();
+    cx.moveTo(sx - b.srcW, sy);
+    cx.lineTo(sx + b.srcW, sy);
+    cx.lineTo(tx + b.w, ty);
+    cx.lineTo(tx - b.w, ty);
+    cx.closePath();
+    cx.fill();
+  }
+  cx.restore();
+}
+
 
 // слоты заклинаний + предмет в руке (поверх всего, без тряски камеры)
 function drawSpellUI(){
