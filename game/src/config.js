@@ -33,6 +33,7 @@ export const CFG = {
 
   cyclops: {
     px: 9,            // масштаб спрайта (высота ≈ четверть экрана)
+    maxAlive: 1,      // босс/мини-босс: больше одного на экране не появляется
     hp: 20,
     speed: 12,        // скорость передвижения
     mtnDmg: 25,       // урон по замку за один удар
@@ -65,12 +66,15 @@ export const CFG = {
     cancelSpeed: 150,   // отпустил медленнее — заклинание вернулось в слот
     lightning: {
       cd: 6,            // перезарядка, сек
-      speed: 1300,      // скорость полёта (строго по направлению броска)
-      pierceDmg: 2,     // сквозной урон всем на узкой линии полёта
-      pierceR: 26,      // полуширина этой линии (под крупный снаряд)
-      boomDmg: 2,       // урон взрыва в точке удара о землю
+      flash: 0.28,      // сколько секунд виден разряд (мгновенный удар, не снаряд)
+      segLen: 20,       // длина одного звена зигзага, px
+      jitter: 16,       // амплитуда излома молнии, px
+      branchChance: 0.4,// вероятность ветки на каждом узле
+      pierceDmg: 8,     // мощный точечный урон по линии разряда (великан = 5 HP — выносит)
+      pierceR: 26,      // полуширина линии поражения
+      boomDmg: 4,       // урон взрыва в точке удара о землю (добивает кучу у земли)
       boomR: 75,        // радиус взрыва
-      eyeDmg: 3,        // урон циклопу при прохождении молнии через глаз
+      eyeDmg: 8,        // урон циклопу при попадании разряда в глаз (босс 20 HP — 3 точных удара)
     },
     boulder: {
       cd: 8,
@@ -115,7 +119,7 @@ export const CFG = {
       { every: 1.5, order: ['small','small','big','small','small','small','big'] },
       { every: 1.4, order: ['big','small','small','huge','small','small','big','small'] },
       { every: 1.2, order: ['small','cyclops','small','big','small','huge','small','big'] },
-      { every: 1.0, order: ['huge','small','big','small','cyclops','small','huge','big','small','small','cyclops'] },
+      { every: 1.0, order: ['huge','small','big','small','cyclops','small','huge','big','small','small','small'] },
     ],
   },
 };

@@ -59,6 +59,7 @@ let running = false, held = null;
 const sk = id => player.skills[id] || 0; // уровень скилла игрока
 let mouse = {x:0,y:0,px:0,py:0,vx:0,vy:0};
 let shake = 0;
+let skyFlash = 0; // зарево на небо в момент удара молнии (1 → 0)
 
 function rnd(a,b){ return a + Math.random()*(b-a); }
 
@@ -292,16 +293,7 @@ function slotAt(x, y){
 function castSpell(hs, vx, vy){
   const id = hs.id;
   if(id === 'lightning'){
-    // летит строго по направлению броска с фиксированной скоростью
-    const a = Math.atan2(vy, vx);
-    bolts.push({
-      x: hs.x, y: hs.y,
-      vx: Math.cos(a)*CFG.spells.lightning.speed,
-      vy: Math.sin(a)*CFG.spells.lightning.speed,
-      life: 3,
-      hitCyc: [], // циклопы, которых эта молния уже задела (чтобы не бить каждый кадр)
-    });
-    sfx.zap();
+    castLightning(hs.x, hs.y, vx, vy);
   } else if(id === 'boulder'){
     const B = CFG.spells.boulder;
     boulders.push({ x: hs.x, y: hs.y, vx: vx*B.throwF, vy: vy*B.throwF, rot: 0 });
@@ -340,12 +332,64 @@ function castWind(vx, vy){
     d.vx = nx * P * w * rnd(.85, 1.15);
     d.vy = ny * P * w * rnd(.85, 1.15) - 120; // небольшой подброс, чтобы красиво летели
     d.rotV = rnd(-6, 6);
-    d.armed = false; d.hitsLeft = 0; d.noDmg = true; d.grounded = false;
+    // заряжаем как при броске рукой: впечатавшись в землю на скорости — получат урон
+    d.armed = true; d.hitsLeft = sk('collide'); d.noDmg = false; d.grounded = false;
   }
   for(const c of cyclopes){
     c.freeze = Math.max(c.freeze, CFG.spells.wind.stun);
     floaties.push({x:c.x+CYC_W/2, y:c.y-24, txt:'ЗАМЕР!', life:1, col:'#1a1626'});
   }
+}
+
+// расстояние от точки (px,py) до отрезка (ax,ay)-(bx,by)
+function distToSeg(px, py, ax, ay, bx, by){
+  const dx = bx-ax, dy = by-ay;
+  const l2 = dx*dx + dy*dy || 1;
+  let t = ((px-ax)*dx + (py-ay)*dy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax+dx*t), py - (ay+dy*t));
+}
+
+// молния: мгновенный разряд вдоль вектора броска до земли + сквозной урон + взрыв
+function castLightning(sx, sy, vx, vy){
+  const L = CFG.spells.lightning;
+  // направление броска (вялый бросок → бьём вперёд-вниз)
+  let nx = vx, ny = vy;
+  const m = Math.hypot(nx, ny);
+  if(m < 1){ nx = 1; ny = 0.5; } else { nx /= m; ny /= m; }
+  const len = Math.hypot(nx, ny); nx /= len; ny /= len;
+  // куда прилетит: до линии земли по лучу; если уходит вверх/в сторону — бьём в землю под точкой выхода
+  let ex, ey;
+  if(ny > 0.02){
+    const d = (GROUND_Y - sy) / ny;
+    ex = sx + nx*d; ey = GROUND_Y;
+  } else {
+    ex = sx + nx*900; ey = GROUND_Y;
+  }
+  ex = Math.max(-40, Math.min(W+40, ex));
+  bolts.push({ x0: sx, y0: sy, x1: ex, y1: ey, life: L.flash, max: L.flash });
+  // мгновенный сквозной урон по всей линии разряда
+  for(const o of [...demons]){
+    if(o.state === 'held' || o.flash > 0 || !demons.includes(o)) continue;
+    const os = sizeOf(o);
+    if(distToSeg(o.x+os/2, o.y+os/2, sx, sy, ex, ey) < L.pierceR + os*0.4)
+      hurt(o, L.pierceDmg, 800);
+  }
+  for(const c of [...cyclopes]){
+    if(distToSeg(c.x+CYC_EYE.x, c.y+CYC_EYE.y, sx, sy, ex, ey) < CYC_EYE.r + L.pierceR)
+      hitCyclops(c, L.eyeDmg);
+  }
+  // искры вдоль разряда
+  for(let i = 0; i < 10; i++){
+    const f = Math.random();
+    particles.push({ x: sx + (ex-sx)*f, y: sy + (ey-sy)*f,
+      vx: rnd(-120,120), vy: rnd(-160,40), col: i%2 ? '#7fb4ff' : '#f4faff',
+      life: rnd(.2,.45), size: rnd(1,3) });
+  }
+  skyFlash = 1;            // вспышка-зарево на всё небо
+  shake = Math.max(shake, 11);
+  sfx.zap();
+  boltBoom({ x: ex });
 }
 
 // взрыв молнии в точке удара о землю
@@ -356,13 +400,71 @@ function boltBoom(b){
   shockwaves.push({x: b.x, y: GROUND_Y, r: 10, max: L.boomR, life: .4});
   for(let i = 0; i < 18; i++){
     particles.push({x:b.x, y:GROUND_Y-4, vx:rnd(-260,260), vy:rnd(-420,-60),
-      col: i%2 ? '#ffd000' : '#fffdf5', life:rnd(.3,.7), size:rnd(2,4)});
+      col: i%2 ? '#7fb4ff' : '#f4faff', life:rnd(.3,.7), size:rnd(2,4)});
   }
   for(const o of [...demons]){
     if(o.state === 'held' || !demons.includes(o)) continue;
     const os = sizeOf(o);
     if(Math.hypot(o.x+os/2 - b.x, o.y+os/2 - GROUND_Y) <= L.boomR) hurt(o, L.boomDmg, 600);
   }
+}
+
+// ломаный путь молнии между двумя точками (зигзаг со смещением по нормали)
+function jaggedPath(x0, y0, x1, y1, jitter){
+  const dx = x1-x0, dy = y1-y0;
+  const dist = Math.hypot(dx, dy) || 1;
+  const nx = -dy/dist, ny = dx/dist;     // нормаль к линии
+  const segs = Math.max(2, Math.round(dist / CFG.spells.lightning.segLen));
+  const pts = [{x:x0, y:y0}];
+  for(let i = 1; i < segs; i++){
+    const f = i/segs;
+    const taper = 1 - Math.abs(f-0.5);   // у концов изломов меньше
+    const off = (Math.random()*2-1) * jitter * taper;
+    pts.push({ x: x0+dx*f + nx*off, y: y0+dy*f + ny*off });
+  }
+  pts.push({x:x1, y:y1});
+  return pts;
+}
+
+function strokePath(pts){
+  cx.beginPath();
+  cx.moveTo(pts[0].x, pts[0].y);
+  for(let i = 1; i < pts.length; i++) cx.lineTo(pts[i].x, pts[i].y);
+  cx.stroke();
+}
+
+function drawLightning(b){
+  const L = CFG.spells.lightning;
+  const t = Math.max(0, b.life / b.max);          // 1 → 0
+  const flick = 0.55 + Math.random()*0.45;        // мерцание разряда
+  const main = jaggedPath(b.x0, b.y0, b.x1, b.y1, L.jitter);
+  cx.save();
+  cx.lineJoin = 'round'; cx.lineCap = 'round';
+  // мягкое внешнее свечение (холодное, синеватое)
+  cx.globalAlpha = 0.22 * t * flick; cx.strokeStyle = '#bcd8ff'; cx.lineWidth = 18; strokePath(main);
+  // сине-голубой ореол
+  cx.globalAlpha = 0.55 * t * flick; cx.strokeStyle = '#7fb4ff'; cx.lineWidth = 8; strokePath(main);
+  // ветви
+  cx.globalAlpha = 0.5 * t * flick; cx.strokeStyle = '#a7ccff'; cx.lineWidth = 2;
+  for(let i = 1; i < main.length-1; i++){
+    if(Math.random() < L.branchChance){
+      const p = main[i];
+      const bx = p.x + (Math.random()*2-1)*46;
+      const by = Math.min(GROUND_Y, p.y + Math.random()*44);
+      strokePath(jaggedPath(p.x, p.y, bx, by, L.jitter*0.6));
+    }
+  }
+  // бело-голубое раскалённое ядро
+  cx.globalAlpha = t; cx.strokeStyle = '#f4faff'; cx.lineWidth = 2.5; strokePath(main);
+  // вспышка-шар в точке удара о землю
+  const g = cx.createRadialGradient(b.x1, b.y1, 0, b.x1, b.y1, 46);
+  g.addColorStop(0, `rgba(244,250,255,${0.75*t})`);
+  g.addColorStop(0.4, `rgba(127,180,255,${0.4*t})`);
+  g.addColorStop(1, 'rgba(127,180,255,0)');
+  cx.globalAlpha = 1; cx.fillStyle = g;
+  cx.beginPath(); cx.arc(b.x1, b.y1, 46, 0, Math.PI*2); cx.fill();
+  cx.restore();
+  cx.globalAlpha = 1;
 }
 
 function crumbleBoulder(bl){
@@ -486,9 +588,15 @@ function update(dt){
   if(spawnQueue.length){
     spawnTimer -= dt;
     if(spawnTimer <= 0){
-      const t = spawnQueue.shift();
-      t === 'cyclops' ? spawnCyclops() : spawnDemon(t);
-      spawnTimer = curEvery * rnd(.85, 1.15);
+      const t = spawnQueue[0];
+      // циклоп — мини-босс: пока живой на экране, следующего не выпускаем
+      if(t === 'cyclops' && cyclopes.length >= CFG.cyclops.maxAlive){
+        spawnTimer = 1.0; // подождём и проверим снова
+      } else {
+        spawnQueue.shift();
+        t === 'cyclops' ? spawnCyclops() : spawnDemon(t);
+        spawnTimer = curEvery * rnd(.85, 1.15);
+      }
     }
   } else {
     betweenTimer += dt;
@@ -655,33 +763,12 @@ function update(dt){
     heldSpell.y += (mouse.y - heldSpell.y) * Math.min(1, dt*20);
   }
 
-  // ── молнии ──
+  // ── молнии (мгновенный разряд — только гаснущая вспышка) ──
   for(const b of [...bolts]){
-    b.x += b.vx*dt; b.y += b.vy*dt; b.life -= dt;
-    // сквозной урон по узкой линии полёта
-    for(const o of [...demons]){
-      if(o.state==='held' || o.flash>0 || !demons.includes(o)) continue;
-      const os = sizeOf(o);
-      if(Math.hypot(o.x+os/2 - b.x, o.y+os/2 - b.y) < CFG.spells.lightning.pierceR + os*0.4){
-        hurt(o, CFG.spells.lightning.pierceDmg, 800); // пролетает насквозь, не останавливаясь
-      }
-    }
-    // урон циклопу при прохождении через глаз (насквозь, но один раз на циклопа)
-    for(const c of [...cyclopes]){
-      if(b.hitCyc.includes(c)) continue;
-      const dEye = Math.hypot(b.x - (c.x+CYC_EYE.x), b.y - (c.y+CYC_EYE.y));
-      if(dEye < CYC_EYE.r + CFG.spells.lightning.pierceR){
-        hitCyclops(c, CFG.spells.lightning.eyeDmg);
-        b.hitCyc.push(c);
-      }
-    }
-    // искра-след
-    particles.push({x:b.x, y:b.y, vx:rnd(-40,40), vy:rnd(-40,40),
-      col:'#ffd000', life:.2, size:2});
-    // взрыв — только при ударе о землю сверху (стартует молния из руки ниже линии земли)
-    if(b.y >= GROUND_Y && b.vy > 0){ boltBoom(b); bolts.splice(bolts.indexOf(b),1); continue; }
-    if(b.x < -40 || b.x > W+40 || b.y < -40 || b.y > H+40 || b.life <= 0) bolts.splice(bolts.indexOf(b),1);
+    b.life -= dt;
+    if(b.life <= 0) bolts.splice(bolts.indexOf(b), 1);
   }
+  if(skyFlash > 0) skyFlash = Math.max(0, skyFlash - dt * 3.5); // зарево гаснет за ~0.3с
 
   // ── валуны ──
   const B = CFG.spells.boulder;
@@ -803,6 +890,17 @@ function draw(){
     cx.drawImage(art.sky, -20, -20, W+40, H+40);
   } else {
     cx.fillStyle = '#dfe1f4'; cx.fillRect(-20,-20,W+40,H+40);
+  }
+
+  // — гроза от молнии: небо затягивает тёмно-синим на время разряда —
+  if(skyFlash > 0){
+    const a = skyFlash;
+    const sg = cx.createLinearGradient(0, -20, 0, GROUND_Y);
+    sg.addColorStop(0,   `rgba(8,12,32,${0.72*a})`);   // вверху почти чёрно-синее
+    sg.addColorStop(0.6, `rgba(20,34,74,${0.55*a})`);
+    sg.addColorStop(1,   `rgba(40,60,110,${0.28*a})`); // у горизонта светлее
+    cx.fillStyle = sg;
+    cx.fillRect(-20, -20, W+40, GROUND_Y+40);
   }
 
   // — облака — (плывут; позиции обновляет updateClouds)
@@ -943,24 +1041,8 @@ function draw(){
     }
   }
 
-  // молнии — крупный светящийся снаряд с хвостом
-  for(const b of bolts){
-    const m = Math.hypot(b.vx, b.vy) || 1;
-    const ux = b.vx/m, uy = b.vy/m;
-    const len = 54;
-    const tx = b.x - ux*len, ty = b.y - uy*len;
-    cx.lineCap = 'round';
-    // внешнее свечение
-    cx.globalAlpha = .35; cx.strokeStyle = '#fff7c0'; cx.lineWidth = 18;
-    cx.beginPath(); cx.moveTo(tx, ty); cx.lineTo(b.x, b.y); cx.stroke();
-    // яркое ядро
-    cx.globalAlpha = 1; cx.strokeStyle = '#ffd000'; cx.lineWidth = 8;
-    cx.beginPath(); cx.moveTo(tx, ty); cx.lineTo(b.x, b.y); cx.stroke();
-    // белая голова-шар
-    cx.fillStyle = '#fffdf5';
-    cx.beginPath(); cx.arc(b.x, b.y, 9, 0, Math.PI*2); cx.fill();
-    cx.lineCap = 'butt';
-  }
+  // молнии — ломаный разряд с ветвлением и свечением
+  for(const b of bolts) drawLightning(b);
 
   // валуны
   for(const bl of boulders){
@@ -1141,7 +1223,7 @@ muteBtn.addEventListener('click', () => {
 
 function start(){
   demons=[]; puddles=[]; particles=[]; floaties=[]; cyclopes=[]; shockwaves=[];
-  bolts=[]; boulders=[]; windStreaks=[]; heldSpell=null;
+  bolts=[]; boulders=[]; windStreaks=[]; heldSpell=null; skyFlash=0;
   for(const s of spellSlots) s.cd = 0;
   score=0; hp=100; held=null; betweenTimer=0;
   player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
