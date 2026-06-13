@@ -6,7 +6,7 @@ import {
 } from './config.js';
 import { SPRITES, CYC_SPRITE, SPELL_SPRITES, HORN_SPRITE } from './sprites.js';
 import { sfx, toggleMute } from './audio.js';
-import { art } from './assets.js';
+import { art, cursorFrames } from './assets.js';
 
 const cv = document.getElementById('game');
 const cx = cv.getContext('2d');
@@ -704,6 +704,7 @@ function loop(ts){
   const dt = Math.min(.033, (ts-last)/1000 || .016);
   last = ts;
   updateClouds(dt); // плывут всегда, даже в меню и на паузе
+  updateCursor(dt); // курсор анимируется всегда, чтобы успеть «сжаться» при хватании
   if(running && !choosing) update(dt);
   draw();
   requestAnimationFrame(loop);
@@ -1316,6 +1317,67 @@ function draw(){
     cx.drawImage(SPELL_SPRITES.boulder, -br, -br, br*2, br*2);
     cx.restore();
   }
+
+  // курсор-рука вместо системного курсора (он скрыт в CSS) — поверх всего
+  if(running) drawCursor();
+}
+
+// Курсор-рука: спрайт 16×16 в позиции мыши. Системный курсор скрыт (cursor:none),
+// поэтому без этой отрисовки над холстом ничего не видно. Три глобальных состояния:
+//   idle    → back1  (рука раскрыта, ничего не держим и не на чём)
+//   pointer → back5  (мгновенно при наведении на интерактив — готовый Рог или
+//             заряженную тучу; так же мгновенно возвращается в idle при уходе)
+//   grab    → схватили монстра/валун: анимация сжатия 8 → 7 → 6 → 5 → back12 (держим)
+const CURSOR_PX = 16;             // размер на экране (спрайт 16px × 1)
+const CURSOR_SEQ = [8, 7, 6, 5];  // кадры сжатия при захвате
+const CURSOR_FRAME_DUR = 0.035;   // сек на кадр сжатия — быстро
+const CURSOR_HELD = 12;           // кадр удержания
+const CURSOR_POINTER = 5;         // кадр-указатель над интерактивом
+let cursorState = { phase: 'idle', i: 0, t: 0 };
+
+// курсор над кликабельным объектом? (готовый Рог или заряженная туча)
+function cursorOverInteractive(){
+  if(hornCd <= 0 && Math.hypot(mouse.x - HORN.x, mouse.y - HORN.y) <= HORN.r) return true;
+  for(const c of clouds){
+    if(!c.charge) continue;
+    if(mouse.x >= c.x && mouse.x <= c.x + cloudW(c) &&
+       mouse.y >= c.y && mouse.y <= c.y + cloudH(c)) return true;
+  }
+  return false;
+}
+
+// Зовётся каждый кадр из loop(). Захват (held/heldBoulder) — главный приоритет и
+// единственное состояние с анимацией; указатель и айдл переключаются мгновенно.
+function updateCursor(dt){
+  const grabbing = !!(held || heldBoulder);
+  if(grabbing){
+    if(cursorState.phase !== 'close' && cursorState.phase !== 'held'){
+      cursorState.phase = 'close'; cursorState.i = 0; cursorState.t = 0;
+    }
+    if(cursorState.phase === 'close'){
+      cursorState.t += dt;
+      while(cursorState.phase === 'close' && cursorState.t >= CURSOR_FRAME_DUR){
+        cursorState.t -= CURSOR_FRAME_DUR;
+        if(++cursorState.i >= CURSOR_SEQ.length) cursorState.phase = 'held';
+      }
+    }
+    return;
+  }
+  cursorState.phase = cursorOverInteractive() ? 'pointer' : 'idle';
+  cursorState.i = 0; cursorState.t = 0;
+}
+function cursorFrameNum(){
+  if(cursorState.phase === 'close')   return CURSOR_SEQ[Math.min(cursorState.i, CURSOR_SEQ.length-1)];
+  if(cursorState.phase === 'held')    return CURSOR_HELD;
+  if(cursorState.phase === 'pointer') return CURSOR_POINTER;
+  return 1;
+}
+function drawCursor(){
+  const img = cursorFrames[cursorFrameNum()];
+  if(!img) return;           // кадры ещё не догрузились
+  // центр кадра — в точке курсора (по ней же считается захват демонов)
+  cx.drawImage(img, Math.round(mouse.x - CURSOR_PX/2), Math.round(mouse.y - CURSOR_PX/2),
+               CURSOR_PX, CURSOR_PX);
 }
 
 // Рог на стене врат: золотое сияние и покачивание, когда готов; дуга перезарядки, когда нет
