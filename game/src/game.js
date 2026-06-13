@@ -303,12 +303,16 @@ let hugeSeen = false; // появился ли уже первый «huge» — 
 // чтобы игрок не встречал двух незнакомцев разом (см. pickStreamType).
 let seenTypes = new Set();
 let lastDebutAt = -999;
+let lastPickedDebut = false;
+const TUTORIAL_DEBUT_TYPES = new Set(['big', 'caster', 'mole', 'roller']);
+const FIRE_PERKS = new Set(['pyro', 'inferno', 'wildfire', 'emberSmash', 'stormConduit', 'wildSpread', 'fireVortex', 'infernoThrow', 'ashSlam']);
 let player = { level: 0, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
 let pendingLevels = 0, choosing = false;
 // Перки забега: при старте тасуем CFG.leveling.perks и выдаём первыми двумя из
 // массива. После выбора срезаем пару целиком (slice(2)) — невыбранный из пары
 // больше не выпадает. 10 перков → 5 пар → ровно 5 уровней.
 let perkPool = [];
+let currentOfferIds = [];
 let killSinceRepair = 0;   // счётчик для перка «Кладка из костей»
 let usedSecondWind = false; // перк «Второе дыхание» — одноразовое спасение врат
 // ── статистика сессии (для лога прохождений, см. logSession) ──
@@ -322,6 +326,19 @@ let shake = 0;
 let skyFlash = 0; // зарево на небо в момент удара молнии (1 → 0)
 
 function rnd(a,b){ return a + Math.random()*(b-a); }
+
+function addCrushed(){
+  score++;
+  scoreEl.textContent = score;
+}
+
+function firePerksUnlocked(){
+  return braziersLit || gameTime >= CFG.fire.litAt;
+}
+
+function perkEligible(id){
+  return !FIRE_PERKS.has(id) || firePerksUnlocked();
+}
 
 function spawnDemon(type){
   // первый «huge» за партию — переключаем музыку с вступительной на боевую
@@ -376,11 +393,20 @@ function returnFromOffscreen(d){
   d.swing = 0; d.walled = false; d.roofed = false;
 }
 
+function sendOffscreen(d){
+  d.armed = false; d.noEyeDmg = false; d.hitsLeft = 0;
+  hurt(d, CFG.offscreen.dmg, 0);
+  if(!demons.includes(d)) return false; // не пережил вылет — погиб
+  d.state = 'offscreen';
+  d.returnT = CFG.offscreen.returnDelay;
+  return true;
+}
+
 // дальний моб запускает снаряд по вратам (летит влево, урон при достижении стены)
 function fireShot(d){
   const T = TYPES[d.type];
   const s = sizeOf(d);
-  shots.push({ x: d.x, y: d.y + s*0.4, vx: -T.shotSpeed, dmg: T.shotDmg });
+  shots.push({ x: d.x + s*0.12, y: d.y + s*0.42, vx: -T.shotSpeed, dmg: T.shotDmg, len: 26 });
   sfx.throw();
 }
 
@@ -670,7 +696,7 @@ function splat(d, sp){
     }
   }
   const pts = TYPES[d.type].score;
-  score += pts; scoreEl.textContent = score;
+  addCrushed();
   gainXP(pts);
   const s = sizeOf(d), px = d.x + s/2, py = d.y + s/2;
   const col = bloodCol(d.type);
@@ -774,8 +800,8 @@ function tutorialScan(dt){
   // носильщик валуна — отобрать валун (закрытие захватом валуна)
   d = demons.find(m => m.type==='roller' && m.hasBoulder && m.state==='walk');
   if(d && tutorialTryMessage('roller', T.rollerTitle, T.rollerSub, 'grab')){ msgHi = { demons:[d], boulder:d, grab:{kind:'boulder', target:d} }; return true; }
-  // дальний стрелок начал обстрел — хватать быстрее (закрытие захватом самого стрелка)
-  d = demons.find(m => m.type==='caster' && m.state==='ranged');
+  // дальний стрелок — хватать быстрее, пока он ещё не дошёл до позиции обстрела
+  d = demons.find(m => m.type==='caster' && m.state!=='offscreen' && m.state!=='held' && m.state!=='burrow');
   if(d && tutorialTryMessage('caster', T.casterTitle, T.casterSub, 'grab')){ msgHi = { demons:[d], grab:{kind:'demon', target:d} }; return true; }
   // копатель вынырнул (прошёл половину пути) — ждать, пока вылезет (закрытие кликом)
   d = demons.find(m => m.type==='mole' && m.state!=='burrow' && m.state!=='offscreen' && m.state!=='held');
@@ -914,7 +940,7 @@ function hitCyclops(c, dmg, fromFire = false){
     if(c.boss2){ boss2Dead = true; dragonTimer = CFG.bosses.dragonDelay; } // следом выйдет дракон
     sfx.splat(); shake = CFG.cyclops.shakeDeath;
     stats.kills.cyclops = (stats.kills.cyclops || 0) + 1; stats.killsTotal++;
-    score += CFG.cyclops.score; scoreEl.textContent = score;
+    addCrushed();
     gainXP(CFG.cyclops.score);
     const px = c.x + CYC_W/2;
     const cbCol = bloodCol('cyclops');
@@ -1001,6 +1027,8 @@ function hitDragon(dmg){
   }
   if(dr.hp <= 0){
     sfx.splat(); shake = 24;
+    addCrushed();
+    stats.kills.dragon = (stats.kills.dragon || 0) + 1; stats.killsTotal++;
     const px = dr.x + DRG_W*0.4, py = dr.y + DRG_H*0.45;
     for(let i = 0; i < 60; i++){
       particles.push({x:px+rnd(-DRG_W*0.3,DRG_W*0.3), y:py+rnd(-DRG_H*0.3,DRG_H*0.3),
@@ -1223,7 +1251,7 @@ function showVictory(){
   ovTitle.textContent = 'Вы защитили Асгард';
   ovText.innerHTML = 'Дракон повержен, а орду испепелил сам Громовержец.<br>' +
     'Западная стена выстояла — Асгард спасён.';
-  ovScore.textContent = 'Очки: ' + score;
+  ovScore.textContent = 'Раздавлено: ' + score;
   ovScore.classList.remove('hidden');
   ovButtons.classList.add('hidden');         // прячем стандартные кнопки рестарта
   endlessBtn.classList.remove('hidden');     // обе кнопки победы
@@ -1275,6 +1303,7 @@ function startEndless(){
 //  2) обычный поток — случайный тип из УЖЕ ВИДЕННЫХ с учётом времени:
 //     вес = weight + grow*(прошло секунд с разблокировки).
 function pickStreamType(){
+  lastPickedDebut = false;
   const pool = CFG.stream.pool;
   const unlocked = pool.filter(e => gameTime >= e.from);
 
@@ -1282,8 +1311,12 @@ function pickStreamType(){
   if(gameTime - lastDebutAt >= CFG.stream.introGap){
     const debut = unlocked.find(e => !seenTypes.has(e.type)); // самый ранний невиденный
     if(debut){
+      if(TUTORIAL_DEBUT_TYPES.has(debut.type) && demons.some(m => m.state !== 'offscreen')){
+        return null;
+      }
       seenTypes.add(debut.type);
       lastDebutAt = gameTime;
+      lastPickedDebut = true;
       return debut.type;
     }
   }
@@ -1349,6 +1382,12 @@ function gainXP(n){
 }
 
 function openSkillChoice(){
+  // пул кончился (все перки разобраны) — выборов больше нет
+  const eligible = perkPool.filter(perkEligible);
+  if(eligible.length < 2){
+    if(!firePerksUnlocked()) return; // огненные перки откроются вместе с жаровнями
+    pendingLevels = 0; return;
+  }
   shake = 0; // игра замирает — тряска камеры тоже
   // аккуратно выпускаем демона из руки
   if(held){
@@ -1356,11 +1395,9 @@ function openSkillChoice(){
     held.armed = false; held.noEyeDmg = false; held.noDmg = true;
     held = null; cv.classList.remove('grabbing');
   }
-  // пул кончился (все перки разобраны) — выборов больше нет
-  if(perkPool.length < 2){ pendingLevels = 0; return; }
   choosing = true;
-  // первые два перка пула = пара этого уровня (пул уже перетасован при старте)
-  const offer = perkPool.slice(0, 2).map(id => ({ id, ...CFG.skills[id] }));
+  currentOfferIds = eligible.slice(0, 2);
+  const offer = currentOfferIds.map(id => ({ id, ...CFG.skills[id] }));
   const holdMs = (CFG.leveling.pickHold ?? 0.5) * 1000;
   skillCards.innerHTML = '';
   for(const s of offer){
@@ -1400,8 +1437,10 @@ function openSkillChoice(){
 
 function pickSkill(id){
   player.skills[id] = 1; // перк взят (все перки одноуровневые)
-  // срезаем всю пару: выбранный применён, второй (отвергнутый) выбывает на забег
-  perkPool = perkPool.slice(2);
+  // выбранная пара выбывает из забега; огненные перки до появления огня просто ждут в пуле
+  const offered = new Set(currentOfferIds);
+  perkPool = perkPool.filter(pid => !offered.has(pid));
+  currentOfferIds = [];
   pendingLevels--;
   lvlOverlay.classList.add('hidden');
   if(pendingLevels > 0){ openSkillChoice(); return; }
@@ -2030,10 +2069,11 @@ function update(dt){
     for(const bz of BRAZIERS) emitFireParticles(bz.x, bz.y, 14, 1);
     shake = Math.max(shake, 6);
     if(tutorialTryMessage('brazier', CFG.tutorial.brazierTitle, CFG.tutorial.brazierSub, 'click')) msgHi = null;
+    if(pendingLevels > 0 && !choosing && running) openSkillChoice();
   }
-  // уровень угрозы для HUD
+  // внутренний уровень угрозы для сессионного лога
   const th = Math.floor(gameTime / CFG.stream.threatEvery) + 1;
-  if(th !== threat){ threat = th; threatEl.textContent = threat; }
+  if(th !== threat) threat = th;
   // финал после смерти дракона (катарсис → ворон → орда → молнии Тора → победа)
   if(finale) updateFinale(dt);
   // обычный поток мобов: идёт в обычной игре и в бесконечном режиме, но НЕ во время
@@ -2041,8 +2081,15 @@ function update(dt){
   if(!finale || finale === 'endless'){
     spawnTimer -= dt;
     if(spawnTimer <= 0){
-      spawnDemon(pickStreamType());
-      spawnTimer = curSpawnEvery() * rnd(.8, 1.2);
+      const type = pickStreamType();
+      if(type){
+        spawnDemon(type);
+        spawnTimer = lastPickedDebut && TUTORIAL_DEBUT_TYPES.has(type)
+          ? CFG.stream.tutorialIntroPause
+          : curSpawnEvery() * rnd(.8, 1.2);
+      } else {
+        spawnTimer = 0.35; // ждём, пока сцена очистится для туториального дебюта
+      }
     }
   }
   // боссы выходят последовательно, каждый по одному разу (см. updateBosses)
@@ -2230,15 +2277,10 @@ function update(dt){
       d.y += d.vy * dt;
       d.rot += d.rotV * dt * 4;
       const M = CFG.offscreen.margin;
-      // улетел ВЛЕВО за врата — «доставлен» в город: врата получают двойной урон, моб пропал
-      if(d.x + s < -M){ cityBreach(d); continue; }
-      // улетел далеко ВПРАВО — выброшен прочь: получает урон, выжил → «на возврат», нет → гибнет
+      // улетел далеко за край — получает урон и, если выжил, возвращается справа позже
+      if(d.x + s < -M){ sendOffscreen(d); continue; }
       if(d.x > W + M){
-        d.armed = false; d.noEyeDmg = false; d.hitsLeft = 0;
-        hurt(d, CFG.offscreen.dmg, 0);
-        if(!demons.includes(d)) continue; // не пережил вылет — погиб
-        d.state = 'offscreen';
-        d.returnT = CFG.offscreen.returnDelay;
+        sendOffscreen(d);
         continue;
       }
 
@@ -2722,6 +2764,7 @@ function draw(){
     if(d.flip) cx.scale(-1,1);
     if(d.type==='bomber') drawBomber(s, last*0.001, d.x); // сам — ходячая бомба
     else cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s);
+    if(d.type==='caster') drawCasterBow(s, d.flip);
     // вспышка при уроне
     if(d.flash > 0){
       cx.globalAlpha = Math.min(1, d.flash*5)*0.7;
@@ -2771,12 +2814,25 @@ function draw(){
     cx.restore();
   }
 
-  // снаряды дальних мобов — тёмно-фиолетовые сгустки со свечением
+  // снаряды дальних мобов — стрелы
   for(const sh of shots){
-    cx.globalAlpha = .4; cx.fillStyle = '#b06bff';
-    cx.beginPath(); cx.arc(sh.x, sh.y, 9, 0, Math.PI*2); cx.fill();
-    cx.globalAlpha = 1; cx.fillStyle = '#d9b3ff';
-    cx.beginPath(); cx.arc(sh.x, sh.y, 5, 0, Math.PI*2); cx.fill();
+    const len = sh.len || 26;
+    const tailX = sh.x + len;
+    cx.strokeStyle = '#5a3218'; cx.lineWidth = 2; cx.lineCap = 'round';
+    cx.beginPath(); cx.moveTo(tailX, sh.y); cx.lineTo(sh.x, sh.y); cx.stroke();
+    cx.lineCap = 'butt';
+    cx.fillStyle = '#2f3038';
+    cx.beginPath();
+    cx.moveTo(sh.x - 7, sh.y);
+    cx.lineTo(sh.x + 2, sh.y - 4);
+    cx.lineTo(sh.x + 2, sh.y + 4);
+    cx.closePath();
+    cx.fill();
+    cx.strokeStyle = '#d8c79a'; cx.lineWidth = 1;
+    cx.beginPath();
+    cx.moveTo(tailX + 1, sh.y - 4); cx.lineTo(tailX - 6, sh.y);
+    cx.lineTo(tailX + 1, sh.y + 4);
+    cx.stroke();
   }
 
   // фаерболы дракона (и пойманный в руке — он остаётся в этом же массиве)
@@ -3273,6 +3329,28 @@ function drawEntityFire(x, y, w, h, scale){
 // со злыми глазами, раскалёнными трещинами и шипящим фитилём.
 // Рисуется в локальных координатах с центром (0,0); вызывается уже внутри
 // translate/rotate/flip из основного цикла отрисовки демонов.
+function drawCasterBow(s, flipped){
+  const dir = flipped ? 1 : -1;
+  const x = dir*s*0.34, y = -s*0.08;
+  const h = s*0.55;
+  cx.save();
+  cx.strokeStyle = '#5a3218';
+  cx.lineWidth = Math.max(2, s*0.055);
+  cx.lineCap = 'round';
+  cx.beginPath();
+  cx.moveTo(x, y - h*0.5);
+  cx.quadraticCurveTo(x + dir*s*0.22, y, x, y + h*0.5);
+  cx.stroke();
+  cx.strokeStyle = '#e0d0a2';
+  cx.lineWidth = Math.max(1, s*0.025);
+  cx.beginPath();
+  cx.moveTo(x, y - h*0.5);
+  cx.lineTo(x - dir*s*0.12, y);
+  cx.lineTo(x, y + h*0.5);
+  cx.stroke();
+  cx.restore();
+}
+
 function drawBomber(s, t, phase){
   const R = s * 0.34;            // радиус тела-бомбы
   const cy = -s * 0.04;          // центр тела — чуть выше середины спрайта
@@ -3338,7 +3416,6 @@ function drawBomber(s, t, phase){
 
 // ── HUD / overlay ──────────────────────────────────────────────────
 const scoreEl = document.getElementById('score');
-const threatEl = document.getElementById('threat');
 const hpFill = document.getElementById('hpfill');
 const lvlEl = document.getElementById('lvl');
 const xpFill = document.getElementById('xpfill');
@@ -3449,16 +3526,16 @@ function start({ skipTutorial = false, skipDialogue = false } = {}){
   score=0; hp=100; held=null;
   gameTime=0; spawnTimer=0.6; cyclopsTimer=CFG.stream.cyclopsFirst; threat=1;
   hugeSeen=false;
-  seenTypes = new Set(); lastDebutAt = -999;
+  seenTypes = new Set(); lastDebutAt = -999; lastPickedDebut = false;
   player = { level: 0, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
-  pendingLevels = 0; choosing = false;
+  pendingLevels = 0; choosing = false; currentOfferIds = [];
   perkPool = [...CFG.leveling.perks].sort(() => Math.random() - .5); // тасуем перки на забег
   killSinceRepair = 0; usedSecondWind = false;
   afterFirstPending = false; tutDemon = null; afterFirstTimer = 0; // второй диалог ворона ещё не показан
   stats = newStats();
   resetTutorial(skipTutorial ? false : CFG.tutorial.enabled);
   msgHi = null; cycTutT = 0;
-  scoreEl.textContent='0'; hpFill.style.width='100%'; threatEl.textContent='1';
+  scoreEl.textContent='0'; hpFill.style.width='100%';
   updateXPBar();
   overlay.classList.add('hidden');
   startScreen.classList.add('hidden'); // письмо больше не показываем — после старта только overlay-геймовер
@@ -3506,7 +3583,7 @@ function gameOver(){
     ovTitle.textContent = 'Врата всё же пали…';
     ovText.innerHTML = 'Орда оказалась нескончаемой. Но Асгард ты уже спас — ' +
       'твоё имя останется в чертогах Одина, что бы ни было дальше.';
-    ovScore.textContent = 'Очки: ' + score;
+    ovScore.textContent = 'Раздавлено: ' + score;
     ovScore.classList.remove('hidden');
     ovButtons.classList.add('hidden');
     endlessBtn.classList.add('hidden');     // только «оставить имя»
@@ -3529,7 +3606,7 @@ function gameOver(){
   ovText.innerHTML = 'Демоны ворвались в Асгард прямо посреди пира.<br>' +
     'Один разочарованно отставил кубок: к его столу ты пока не готов.<br>' +
     'Но сколько луж ты после себя оставил!';
-  ovScore.textContent = 'Очки: ' + score;
+  ovScore.textContent = 'Раздавлено: ' + score;
   ovScore.classList.remove('hidden');
   overlay.classList.remove('hidden');
 }
