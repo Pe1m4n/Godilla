@@ -13,10 +13,9 @@ canvas{
   display:block;
   image-rendering:pixelated;
   image-rendering:crisp-edges;
-  cursor:grab;
+  cursor:none; /* системный курсор скрыт — рисуем свою руку спрайтом в game.js */
   box-shadow:0 0 0 4px var(--ink), 0 18px 50px rgba(0,0,0,.45);
 }
-canvas.grabbing{cursor:grabbing;}
 #hud{
   position:absolute;top:10px;left:12px;right:12px;
   display:flex;justify-content:space-between;align-items:flex-start;

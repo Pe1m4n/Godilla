@@ -25,6 +25,19 @@ const FILES = {
   flagstock: flagstockUrl, flagmatter: flagmatterUrl,
 };
 
+// ── курсор-рука: кадры 16×16, файлы back1.png … back33.png ──
+// Vite собирает их пачкой через glob; собираем карту номер→адрес картинки.
+const cursorUrls = import.meta.glob('../assets/sprites/cursor/back/back*.png',
+  { eager: true, query: '?url', import: 'default' });
+const CURSOR_FILES = {};
+for (const [path, url] of Object.entries(cursorUrls)){
+  const m = path.match(/back(\d+)\.png$/);
+  if (m) CURSOR_FILES[+m[1]] = url;
+}
+
+// загруженные кадры курсора: номер → <img> (заполняется в loadArt)
+export const cursorFrames = {};
+
 // сюда складываются загруженные картинки; draw() в game.js смотрит на них.
 // Пока картинка не догрузилась — null, и игра рисует запасной вариант.
 export const art = {
@@ -35,7 +48,10 @@ export const art = {
 
 // запустить загрузку (ничего не блокирует — появятся в кадре по готовности)
 export function loadArt(){
-  return Promise.all(Object.entries(FILES).map(([k, u]) =>
-    loadImage(u).then(img => { art[k] = img; }).catch(() => {})
-  ));
+  return Promise.all([
+    ...Object.entries(FILES).map(([k, u]) =>
+      loadImage(u).then(img => { art[k] = img; }).catch(() => {})),
+    ...Object.entries(CURSOR_FILES).map(([n, u]) =>
+      loadImage(u).then(img => { cursorFrames[n] = img; }).catch(() => {})),
+  ]);
 }
