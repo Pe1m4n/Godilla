@@ -43,6 +43,60 @@ canvas{
 .skill-card:hover{background:#ffd76a;}
 .skill-card b{display:block;font-family:var(--font-pixel);font-size:10px;line-height:1.5;margin-bottom:8px;text-transform:uppercase;}
 .skill-card .lvl-tag{margin-top:8px;color:#7a4a32;font-size:12px;}
+/* ── стартовый экран: фон-комната + письмо на весь нижний край ── */
+#startScreen{
+  position:absolute;inset:0;
+  background:url(../assets/sprites/start-screen-blured.png) center/cover no-repeat;
+  display:flex;justify-content:center;align-items:flex-end; /* письмо прижато к низу */
+}
+/* слой пылинок поверх письма; клики проходят сквозь к кнопкам */
+#dust{
+  position:absolute;inset:0;width:100%;height:100%;
+  pointer-events:none;z-index:3;
+}
+/* название игры — рунически-каменный викингский шрифт над письмом,
+   тёплый пергамент + тёмная обводка. Кириллицы у Metamorphous нет — название по-английски */
+#gameTitle{
+  position:absolute;top:18px;left:0;width:100%;
+  text-align:center;pointer-events:none;
+  font-family:'Metamorphous', serif;
+  font-size:46px;line-height:1;letter-spacing:2px;
+  color:#e8d3a0;
+  /* плотная обводка (8 сдвигов по «пикселю») + мягкая тень для объёма */
+  text-shadow:
+    -2px -2px 0 #2c2118, 2px -2px 0 #2c2118, -2px 2px 0 #2c2118, 2px 2px 0 #2c2118,
+     0 -2px 0 #2c2118,  0 2px 0 #2c2118,  -2px 0 0 #2c2118,  2px 0 0 #2c2118,
+     0 4px 7px rgba(0,0,0,.55);
+}
+#letter{
+  /* натуральный размер бумаги 383×441; нижний край касается низа экрана */
+  width:383px;height:441px;
+  background:url(../assets/sprites/ui-start-screen-letter.png) center/contain no-repeat;
+  display:flex;flex-direction:column;
+  padding:44px 46px 24px; /* поля под загнутые края бумаги */
+}
+#letter-text{
+  flex:1;min-height:0;
+  color:#59483c;
+  font-family:var(--font-pixel); /* пиксельный, как везде в игре */
+  /* межстрочный 1.85: при тесном (1.6) высокий пиксельный шрифт лепится в строки
+     и выглядит приплюснутым. В остальном UI пиксельный идёт с 1.7–2.0. */
+  font-size:8px;line-height:1.85;text-align:left;
+  padding-top:10px; /* текст чуть ниже верхней кромки бумаги */
+}
+#letter-text p{margin-bottom:5px;}
+#letter-text .ps{font-size:8px;}
+#letter-text .ps-gap{margin-top:18px;} /* пустые ~2 строки перед постскриптумом */
+#letter-buttons{display:flex;flex-direction:column;align-items:stretch;gap:7px;margin-top:6px;}
+#letter button{
+  font-family:var(--font-pixel);cursor:pointer;border:none;
+  background:#3f3124;color:#f1e7d4;
+}
+#letter button:hover{background:#665443;}
+#letter button:focus-visible{outline:2px dashed #f1e7d4;outline-offset:2px;}
+#startWallBtn{font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:10px 12px;}
+/* отладочная кнопка — мельче и приглушённая, её потом уберём */
+#letter button.debug-btn{font-size:7px;line-height:1.5;padding:6px 10px;color:#c9bca4;}
 #overlay{
   position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
   background:rgba(26,22,38,.78);color:var(--ui);text-align:center;gap:18px;
@@ -85,6 +139,11 @@ canvas{
   position:fixed;inset:0;z-index:60;
   pointer-events:none;
   mix-blend-mode:overlay;
+}
+/* шторка перехода меню→игра: чёрный экран, прозрачность анимируется из JS */
+#fade{
+  position:fixed;inset:0;z-index:100;
+  background:#000;opacity:0;pointer-events:none;
 }
 .hidden{display:none !important;}
 .bigscore{font-family:var(--font-pixel);font-size:16px;color:#ffd76a;letter-spacing:1px;}

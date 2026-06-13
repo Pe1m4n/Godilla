@@ -11,8 +11,8 @@ import { art, cursorFrames } from './assets.js';
 import {
   initTutorial, resetTutorial, tutorialActive, tutorialDemon,
   tutorialOnFirstDemon, tutorialComplete, drawTutorial,
-  tutorialFrozen, tutorialMsgActive, tutorialCityBreach,
-  dismissTutorialMessage, drawTutorialMask,
+  tutorialFrozen, tutorialMsgActive, tutorialMsgKey, tutorialMsgDismiss,
+  tutorialTryMessage, dismissTutorialMessage, drawTutorialMask,
 } from './tutorial.js';
 import { initUIText, floatText, label, hideLabel } from './uitext.js';
 import {
@@ -22,6 +22,9 @@ import {
 const cv = document.getElementById('game');
 const cx = cv.getContext('2d');
 cx.imageSmoothingEnabled = false;
+// отдельный холст для пылинок — лежит поверх стартового экрана (см. #dust в index.html)
+const dustCv = document.getElementById('dust');
+const dcx = dustCv.getContext('2d');
 
 // Пиксельный шрифт для текста на канвасе. Размеры — только кратные 8
 // (нативная сетка Press Start 2P): иначе глифы попадают между пикселями
@@ -133,17 +136,18 @@ const GODRAYS = {
 // Спрайт каждой струйки выбирается случайно (smoke1..smoke4); новые рисуются
 // поверх старых (просто порядок в массиве). Анимируется всегда — как облака.
 const SMOKE = {
-  vents: [ {x:3, y:394}, {x:21, y:394}, {x:42, y:394} ], // верх каждой трубы
-  every:    0.55,  // средний интервал между затяжками на одной трубе, сек
+  debug:    false, // ДЕБАГ: рисовать красные точки в местах спауна
+  vents: [ {x:3, y:392}, {x:21, y:392}, {x:42, y:392} ], // верх каждой трубы
+  every:    0.30,  // средний интервал между затяжками на одной трубе, сек (часто — густой дым)
   everyVar: 0.5,   // случайный разброс интервала (× every)
-  rise:     46,    // базовая скорость подъёма вверх, px/сек
-  drift:    34,    // снос влево, px/сек (минус по x)
+  rise:     10,    // базовая скорость подъёма вверх, px/сек (помедленнее)
+  drift:    17,    // снос влево, px/сек (минус по x)
   sway:     10,    // амплитуда бокового покачивания «дымной» траектории, px
   swaySpeed:1.6,   // как быстро виляет струйка
-  grow:     16,    // на сколько px вырастает клуб за свою жизнь
+  grow:     16,    // на сколько px вырастает клуб
   size0:    7,     // стартовый размер клуба, px
-  life:     2.6,   // сколько секунд живёт клуб (раньше уйдёт за край)
-  fadeIn:   0.25,  // доля жизни на проявление
+  growTime: 4.2,   // за сколько секунд клуб дорастает до полного размера
+  alpha:    0.85,  // постоянная прозрачность (без проявления/затухания)
 };
 let smokePuffs = [];
 // у каждой трубы — свой таймер до следующей затяжки
@@ -155,12 +159,11 @@ function updateSmoke(dt){
     if(smokeTimers[i] <= 0){
       const v = SMOKE.vents[i];
       smokePuffs.push({
-        x0: v.x + rnd(-1.5, 1.5), y: v.y, t: 0,
+        x0: v.x, y: v.y, t: 0,
         vx: -SMOKE.drift * rnd(0.7, 1.3),
         vy: -SMOKE.rise  * rnd(0.8, 1.2),
         phase: rnd(0, Math.PI*2),       // фаза покачивания
         spr: 'smoke' + (1 + (Math.random()*4|0)), // случайный спрайт 1..4
-        life: SMOKE.life * rnd(0.8, 1.2),
       });
       smokeTimers[i] = SMOKE.every * (1 + rnd(-SMOKE.everyVar, SMOKE.everyVar));
     }
@@ -172,22 +175,32 @@ function updateSmoke(dt){
     p.x0 += p.vx * dt;
     p.x = p.x0 + Math.sin(p.phase + p.t * SMOKE.swaySpeed) * SMOKE.sway;
   }
-  // убираем отжившие и улетевшие за край (влево/вверх)
-  smokePuffs = smokePuffs.filter(p => p.t < p.life && p.x > -24 && p.y > -24);
+  // убираем ТОЛЬКО когда клуб полностью пересёк край экрана (влево или вверх) —
+  // без затухания: пропадает, лишь когда даже его дальний край ушёл за границу
+  const half = (SMOKE.size0 + SMOKE.grow) / 2; // макс. полуширина клуба
+  smokePuffs = smokePuffs.filter(p => p.x + half > 0 && p.y > 0);
 }
 function drawSmoke(){
   for(const p of smokePuffs){
     const img = art[p.spr];
     if(!img) continue;
-    const k = p.t / p.life;                 // 0..1 прогресс жизни
-    const sz = SMOKE.size0 + SMOKE.grow * k; // клуб растёт по мере подъёма
-    // проявляется в начале, плавно гаснет к концу
-    const a = Math.min(1, k / SMOKE.fadeIn) * (1 - k) * 0.85;
-    cx.globalAlpha = a;
+    const k = Math.min(1, p.t / SMOKE.growTime); // 0..1 рост размера
+    const sz = SMOKE.size0 + SMOKE.grow * k;      // клуб растёт по мере подъёма
+    // постоянная прозрачность: не проявляется и не затухает, просто уходит за край
+    cx.globalAlpha = SMOKE.alpha;
     const h = sz * (img.height / img.width);
-    cx.drawImage(img, Math.round(p.x - sz/2), Math.round(p.y - h/2), sz, h);
+    cx.drawImage(img, Math.round(p.x - sz/2), Math.round(p.y - h), sz, h);
   }
   cx.globalAlpha = 1;
+  // ДЕБАГ: красная точка в каждой точке спауна (поставь false, чтобы убрать)
+  if(SMOKE.debug){
+    cx.fillStyle = '#ff0000';
+    for(const v of SMOKE.vents){
+      cx.beginPath();
+      cx.arc(v.x, v.y, 1.5, 0, Math.PI*2);
+      cx.fill();
+    }
+  }
 }
 
 // ── зернистость: статичный плёночный шум поверх всей картинки (тюнинг) ──
@@ -640,7 +653,92 @@ function cityBreach(d){
   floatText(MOUNTAIN_X + 30, 130, '-'+dmg, '#c0392b', 1.4);
   demons.splice(demons.indexOf(d),1);
   if(hp <= 0){ gameOver(); return; }
-  tutorialCityBreach(); // первый раз за партию — обучающее предупреждение (затемнение + текст)
+  // первый раз за партию — обучающее предупреждение (затемнение + текст), без подсветки
+  if(tutorialTryMessage('city', CFG.tutorial.cityTitle, CFG.tutorial.citySub, 'click')) msgHi = null;
+}
+
+// ── одноразовые подсказки про новые типы врагов ──
+// msgHi — кого подсветить под активным сообщением (рисует drawMsgHighlight)
+let msgHi = null;
+let cycTutT = 0; // сколько секунд на сцене есть циклоп (для отложенной подсказки)
+
+// Сканируем сцену: впервые увидели особый тип врага — показываем подсказку и замораживаем
+// мир. true = сообщение показано (тогда update прерывается на этот кадр).
+function tutorialScan(dt){
+  const T = CFG.tutorial;
+  // здоровяк — бить об землю (закрытие любым кликом)
+  let d = demons.find(m => m.type==='big' && m.state!=='offscreen' && m.state!=='held' && m.state!=='burrow');
+  if(d && tutorialTryMessage('big', T.bigTitle, T.bigSub, 'click')){ msgHi = { demons:[d] }; return true; }
+  // носильщик валуна — отобрать валун (закрытие захватом валуна)
+  d = demons.find(m => m.type==='roller' && m.hasBoulder && m.state==='walk');
+  if(d && tutorialTryMessage('roller', T.rollerTitle, T.rollerSub, 'grab')){ msgHi = { demons:[d], boulder:d, grab:{kind:'boulder', target:d} }; return true; }
+  // дальний стрелок начал обстрел — хватать быстрее (закрытие захватом самого стрелка)
+  d = demons.find(m => m.type==='caster' && m.state==='ranged');
+  if(d && tutorialTryMessage('caster', T.casterTitle, T.casterSub, 'grab')){ msgHi = { demons:[d], grab:{kind:'demon', target:d} }; return true; }
+  // копатель вынырнул (прошёл половину пути) — ждать, пока вылезет (закрытие кликом)
+  d = demons.find(m => m.type==='mole' && m.state!=='burrow' && m.state!=='offscreen' && m.state!=='held');
+  if(d && tutorialTryMessage('mole', T.moleTitle, T.moleSub, 'click')){ msgHi = { demons:[d] }; return true; }
+  // циклоп: ждём, пока зайдёт поглубже — cyclopsDelay секунд на сцене, потом подсказка
+  if(cyclopes.length){
+    cycTutT += dt;
+    if(cycTutT >= T.cyclopsDelay && tutorialTryMessage('cyclops', T.cyclopsTitle, T.cyclopsSub, 'click')){
+      msgHi = { cyc: cyclopes[0] }; return true;
+    }
+  } else cycTutT = 0;
+  return false;
+}
+
+// захват цели «grab»-сообщения: попал по цели → выполняем захват и закрываем подсказку
+function tutorialGrab(p){
+  const g = msgHi && msgHi.grab;
+  if(!g || !g.target || !demons.includes(g.target)){ dismissTutorialMessage(); return; }
+  const d = g.target, s = sizeOf(d);
+  const dist = Math.hypot(p.x-(d.x+s/2), p.y-(d.y+s/2));
+  const gr = Math.max(TYPES[d.type].grabR, s) * 1.6; // щедрый радиус — попасть легко
+  if(dist > gr) return; // мимо — сообщение остаётся
+  if(g.kind === 'boulder'){
+    heldBoulder = { x: p.x, y: p.y };
+    d.hasBoulder = false;
+    floatText(d.x+s/2, d.y-10, 'ВАЛУН!', '#7e828c', 1);
+  } else {
+    held = d; d.state='held'; d.rotV=0; d.grounded=false; d.noDmg=false; d.swing=0; d.walled=false;
+  }
+  cv.classList.add('grabbing'); sfx.grab();
+  dismissTutorialMessage();
+}
+
+// подсветка «героя» сообщения поверх тёмной маски (мягкое свечение + спрайт)
+function tutGlow(x, y, r){
+  const g = cx.createRadialGradient(x, y, r*0.18, x, y, r);
+  g.addColorStop(0, 'rgba(255,247,210,0.22)');
+  g.addColorStop(1, 'rgba(255,247,210,0)');
+  cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, r, 0, Math.PI*2); cx.fill();
+}
+function drawMsgHighlight(){
+  if(!msgHi) return;
+  if(msgHi.demons) for(const d of msgHi.demons){
+    if(!demons.includes(d)) continue;
+    const s = sizeOf(d), mx = d.x+s/2, my = d.y+s/2;
+    tutGlow(mx, my, s*1.7);
+    cx.save(); cx.translate(mx, my); if(d.flip) cx.scale(-1,1);
+    cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s); cx.restore();
+  }
+  if(msgHi.boulder && demons.includes(msgHi.boulder)){
+    const d = msgHi.boulder, s = sizeOf(d), br = CFG.spells.boulder.r;
+    tutGlow(d.x+s/2, d.y - br*0.3, br*2.4);
+    cx.drawImage(SPELL_SPRITES.boulder, d.x+s/2 - br*0.8, d.y - br*1.1, br*1.6, br*1.6);
+  }
+  if(msgHi.cyc && cyclopes.includes(msgHi.cyc)){
+    const c = msgHi.cyc;
+    tutGlow(c.x+CYC_W/2, c.y+CYC_H/2, CYC_W*0.85);
+    cx.drawImage(CYC_SPRITE, c.x, c.y, CYC_W, CYC_H);
+    // мерцающий глаз — «слабое место»
+    const pulse = 0.5 + 0.5*Math.sin(last*0.012);
+    cx.globalAlpha = 0.45 + 0.55*pulse;
+    cx.fillStyle = '#ff3030';
+    cx.beginPath(); cx.arc(c.x+CYC_EYE.x, c.y+CYC_EYE.y, CYC_EYE.r*(1+0.35*pulse), 0, Math.PI*2); cx.fill();
+    cx.globalAlpha = 1;
+  }
 }
 
 function spawnCyclops(){
@@ -1009,15 +1107,17 @@ function onDown(e){
     e.preventDefault();
     return;
   }
-  // открыто модальное предупреждение (заброс в город) — клик закрывает его
-  if(tutorialMsgActive()){
-    dismissTutorialMessage();
-    e.preventDefault();
-    return;
-  }
   const p = ptr(e);
   mouse.x = mouse.px = p.x; mouse.y = mouse.py = p.y;
   mouse.vx = mouse.vy = 0;
+  // открыто модальное обучающее сообщение: 'click' — закрыть любым кликом;
+  // 'grab' — закрыть, только если попал по подсвеченной цели (её и схватим)
+  if(tutorialMsgActive()){
+    if(tutorialMsgDismiss() === 'grab') tutorialGrab(p);
+    else dismissTutorialMessage();
+    e.preventDefault();
+    return;
+  }
   // обучение: можно только схватить выделенного моба — это и завершает обучение
   if(tutorialActive()){
     const d = tutorialDemon();
@@ -1033,6 +1133,7 @@ function onDown(e){
         cv.classList.add('grabbing');
         sfx.grab();
         tutorialComplete(); // обучение пройдено — мир оживает
+        tutDemon = d; afterFirstPending = true; // как добьём этого моба — второй диалог
       }
     }
     e.preventDefault();
@@ -1167,25 +1268,122 @@ window.addEventListener('touchend', onUp);
 
 // ── цикл ───────────────────────────────────────────────────────────
 let last = 0;
+// ── пылинки в воздухе ──────────────────────────────────────────────
+// Мелкие искры пыли по всему экрану: лёгкий дрейф + кружение + мерцание.
+// Рисуются в режиме 'lighter', поэтому ярко вспыхивают на светлых местах
+// (в лучах света из-за облаков) и почти не видны на тёмном — «пляшут в луче».
+let dust = [];
+function initDust(){
+  dust = [];
+  for(let i = 0; i < 42; i++){                      // пылинок поменьше
+    dust.push({
+      x: rnd(0, W), y: rnd(0, H),
+      r: rnd(0.6, 2.1),
+      vx: rnd(-4, 4), vy: rnd(-3, 2),               // медленный дрейф (в среднем чуть вверх — парят)
+      swirl: rnd(0.2, 0.6), swirlAmp: rnd(3, 8),    // спокойное кружение
+      t: rnd(0, 99),
+      twSpeed: rnd(0.7, 1.8), twPhase: rnd(0, 6.28),// медленное мерцание — пылинка «живёт» дольше
+      baseA: rnd(0.25, 0.7),
+    });
+  }
+}
+function updateDust(dt){
+  for(const p of dust){
+    p.t += dt;
+    p.x += p.vx*dt + Math.cos(p.t*p.swirl) * p.swirlAmp * dt;
+    p.y += p.vy*dt + Math.sin(p.t*p.swirl*1.3) * p.swirlAmp * dt;
+    if(p.x < -4) p.x = W+4; else if(p.x > W+4) p.x = -4; // мягкий перенос за краями
+    if(p.y < -4) p.y = H+4; else if(p.y > H+4) p.y = -4;
+  }
+}
+// мягкие лучи света из окна (слева сверху на фоне) — два толстых луча-клина,
+// расходящихся из одной точки. Неяркие, чуть колышутся. Рисуются под пылью,
+// чтобы пылинки мерцали «в луче».
+function drawWindowRays(){
+  const t = last * 0.001;
+  dcx.save();
+  dcx.globalCompositeOperation = 'lighter';
+  dcx.translate(72, 26);   // общая точка истечения у левого окна
+  const len = 780;
+  const beams = [
+    { ang: 0.42, spread: 190, a: 0.07 },  // верхний луч — положе
+    { ang: 0.84, spread: 240, a: 0.06 },  // нижний луч — круче
+  ];
+  const base = 22; // толщина у самого окна (раньше 8) — лучи толще на выходе
+  for(const b of beams){
+    const a = b.a * (0.82 + 0.18*Math.sin(t*0.6 + b.ang*7)); // лёгкое дыхание яркости
+    dcx.save();
+    dcx.rotate(b.ang);     // оба из одной точки, но под разными углами — расходятся веером
+    const g = dcx.createLinearGradient(0, 0, len, 0);
+    g.addColorStop(0, `rgba(255,238,196,${a})`);
+    g.addColorStop(1, 'rgba(255,238,196,0)');
+    dcx.fillStyle = g;
+    // клин: от толщины base у окна сильно расширяется к дальнему краю
+    dcx.beginPath();
+    dcx.moveTo(0, -base/2);
+    dcx.lineTo(len, -b.spread/2);
+    dcx.lineTo(len,  b.spread/2);
+    dcx.lineTo(0,  base/2);
+    dcx.closePath();
+    dcx.fill();
+    dcx.restore();
+  }
+  dcx.restore();
+}
+function drawDust(){
+  dcx.clearRect(0, 0, W, H);
+  // пыль и лучи живут только на стартовом экране; после старта он скрыт — рисовать нечего
+  if(startScreen.classList.contains('hidden')) return;
+  drawWindowRays();
+  dcx.save();
+  dcx.globalCompositeOperation = 'lighter';
+  for(const p of dust){
+    const tw = 0.5 + 0.5*Math.sin(p.t*p.twSpeed + p.twPhase); // мерцание 0..1
+    dcx.globalAlpha = p.baseA * tw;
+    dcx.fillStyle = '#fff4d6'; // тёплый свет пылинки
+    dcx.beginPath(); dcx.arc(p.x, p.y, p.r, 0, Math.PI*2); dcx.fill();
+  }
+  dcx.restore();
+}
+
 function loop(ts){
   const dt = Math.min(.033, (ts-last)/1000 || .016);
   last = ts;
   updateClouds(dt); // плывут всегда, даже в меню и на паузе
   updateSmoke(dt);  // дым из труб домиков — тоже всегда
+  updateDust(dt);   // пылинки парят всегда
   updateCursor(dt); // курсор анимируется всегда, чтобы успеть «сжаться» при хватании
   updateDialogue(dt); // печать реплики во времени (если идёт диалог)
   // диалог и обучение замораживают мир (диалог играется первым, до обучения)
   if(running && !choosing && !tutorialFrozen() && !dialogueActive()) update(dt);
   else shake = 0; // мир на паузе/стопе — всегда гасим тряску камеры (см. CLAUDE.md)
   draw();
+  drawDust(); // пылинки стартового экрана — на своём холсте поверх письма
   requestAnimationFrame(loop);
 }
+
+// туториальный моб (которого игрок схватил в обучении) и флаг ещё-не-показанного
+// второго диалога ворона — заполняются при захвате в обучении (см. onDown).
+// afterFirstTimer — секундная задержка между смертью моба и началом реплик.
+let afterFirstPending = false, tutDemon = null, afterFirstTimer = 0;
+const AFTER_FIRST_DELAY = 1; // сек от смерти туториального моба до второго диалога
 
 function update(dt){
   // скорость курсора (сглаженная) — для бросков и ударов об землю
   mouse.vx = mouse.vx*0.55 + ((mouse.x-mouse.px)/dt)*0.45*0.9;
   mouse.vy = mouse.vy*0.55 + ((mouse.y-mouse.py)/dt)*0.45*0.9;
   mouse.px = mouse.x; mouse.py = mouse.y;
+
+  // разделались с туториальным мобом (пропал из боя) — заводим секундную задержку
+  if(afterFirstPending && tutDemon && !demons.includes(tutDemon)){
+    afterFirstPending = false; tutDemon = null;
+    afterFirstTimer = AFTER_FIRST_DELAY;
+  }
+  // задержка истекла — запускаем второй диалог ворона (один раз)
+  if(afterFirstTimer > 0){
+    afterFirstTimer -= dt;
+    if(afterFirstTimer <= 0){ afterFirstTimer = 0; startDialogue('afterFirst'); }
+  }
 
   // непрерывный поток врагов (см. CFG.stream): со временем чаще и злее, без пауз
   gameTime += dt;
@@ -1211,6 +1409,8 @@ function update(dt){
 
   // первый моб вышел — запускаем обучение и замораживаем мир до его захвата
   if(tutorialOnFirstDemon(demons)) return;
+  // одноразовые подсказки про новые типы врагов (здоровяк, носильщик, циклоп, стрелок, копатель)
+  if(tutorialScan(dt)) return;
 
   for(const d of [...demons]){
     if(!demons.includes(d)) continue;
@@ -1312,6 +1512,7 @@ function update(dt){
         d.y = floor;
         if(!d.grounded){
           d.grounded = true;
+          sfx.slap(d.swing);       // удар мобом о землю — громкость/питч по силе удара
           const dmg = impactDamage(d.swing);
           if(dmg > 0){
             slamSmaller(d);        // ударная волна по меньшим (до урона себе — d ещё жив)
@@ -1319,7 +1520,6 @@ function update(dt){
             hurt(d, dmg, d.swing);
             d.swing = 0;
           }
-          else sfx.thud();
         }
         // лёгкое "вдавливание" — сплющивается
         d.rot = 0;
@@ -1352,9 +1552,9 @@ function update(dt){
         d.x = WALL.x;
         if(!d.walled){
           d.walled = true;
+          sfx.slap(d.swing); // удар мобом о стену замка — по силе удара
           const dmg = impactDamage(d.swing);
           if(dmg > 0){ hurt(d, dmg, d.swing); d.swing = 0; }
-          else sfx.thud();
         }
       } else if(d.x > WALL.x + 12){
         d.walled = false;
@@ -1452,6 +1652,7 @@ function update(dt){
       if(d.x < WALL.x && d.y + s > WALL.top && px0 >= WALL.x){
         d.x = WALL.x;
         const sp = Math.hypot(d.vx, d.vy);
+        sfx.slap(sp); // удар мобом о стену замка — по скорости
         const wasArmed = d.armed;
         d.armed = false; d.noEyeDmg = false; // о стену бросок «разряжается», как об пол
         const dmg = wasArmed ? fireImpactDamage(impactDamage(sp), d, wasArmed, sp) : 0;
@@ -1459,17 +1660,17 @@ function update(dt){
           fireBurst(WALL.x, d.y + s/2, d);
           hurt(d, dmg, sp);
           if(!demons.includes(d)) continue; // разбился о стену
-        } else sfx.thud();
+        }
         d.vx = Math.max(140, Math.abs(d.vx)*0.45); // отскок вправо от стены
         d.rotV *= CFG.throwing.spinFloorDamp;
       }
 
       if(d.y + s >= GROUND_Y){
         d.y = GROUND_Y - s;
+        sfx.slap(Math.hypot(d.vx, d.vy)); // удар мобом о землю — по скорости падения
         if(d.noDmg){
           // вывалился из рук — падение без урона
           d.noDmg = false;
-          sfx.thud();
           d.state='stun'; d.stun = .5; d.vx=d.vy=0; d.rot = 0;
           continue;
         }
@@ -1487,10 +1688,9 @@ function update(dt){
           hurt(d, dmg, sp);
           if(!demons.includes(d)) continue; // разбился
         }
-        // выжил: отскок или стан
+        // выжил: отскок или стан (звук удара уже сыграл slap при контакте с землёй)
         if(Math.abs(d.vy) > 160){
           d.vy = -d.vy*0.45; d.vx *= .7;
-          if(dmg===0) sfx.thud();
         } else {
           d.state='stun'; d.stun = .8 + (TYPES[d.type].hp - d.hp)*0.2;
           d.vx=d.vy=0; d.rot = 0;
@@ -1938,8 +2138,8 @@ function draw(){
 
   // обучающая сцена: затемнение + подсвеченный моб + стрелка + подсказка (поверх всего)
   if(tutorialActive()) drawTutorial(demons, last);
-  // модальное предупреждение (заброс в город): только затемнение, текст — HTML
-  else if(tutorialMsgActive()) drawTutorialMask();
+  // модальное сообщение: затемнение + подсветка «героя» (текст — HTML поверх)
+  else if(tutorialMsgActive()){ drawTutorialMask(); drawMsgHighlight(); }
 
   // окно диалога: подложка + печатающийся текст + треугольник (поверх сцены, без затемнения)
   if(dialogueActive()) drawDialogue(last);
@@ -2270,6 +2470,7 @@ const ovTitle = document.getElementById('ov-title');
 const ovText = document.getElementById('ov-text');
 const ovScore = document.getElementById('ov-score');
 const startBtn = document.getElementById('startBtn');
+const startScreen = document.getElementById('startScreen'); // письмо от матери — только при первом запуске
 
 // кнопка звука (слева внизу)
 const muteBtn = document.getElementById('muteBtn');
@@ -2294,10 +2495,13 @@ function start(skipNarrative = false){
   hugeSeen=false;
   player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
   pendingLevels = 0; choosing = false;
+  afterFirstPending = false; tutDemon = null; afterFirstTimer = 0; // второй диалог ворона ещё не показан
   resetTutorial(skipNarrative ? false : CFG.tutorial.enabled);
+  msgHi = null; cycTutT = 0;
   scoreEl.textContent='0'; hpFill.style.width='100%'; threatEl.textContent='1';
   updateXPBar();
   overlay.classList.add('hidden');
+  startScreen.classList.add('hidden'); // письмо больше не показываем — после старта только overlay-геймовер
   lvlOverlay.classList.add('hidden');
   running = true;
   // музыка: с самого старта играет вступительный трек (см. music.js). Переключится
@@ -2313,7 +2517,7 @@ function gameOver(){
   running = false; held = null; heldBoulder = null;
   choosing = false; pendingLevels = 0;
   shake = 0; // игра остановилась — гасим тряску, иначе экран дёргается на экране поражения
-  music.onDefeat(); // музыка плавно гаснет
+  music.menu(); // экран конца игры — это меню: игровая музыка гаснет, меню-трек возвращается
   lvlOverlay.classList.add('hidden');
   hideLabel('horn'); // рог больше не рисуется — убираем его HTML-подпись
   cv.classList.remove('grabbing');
@@ -2326,10 +2530,33 @@ function gameOver(){
   startBtn.textContent = 'Ещё раз';
   overlay.classList.remove('hidden');
 }
+// Переход меню→игра через чёрную шторку: медленный наплыв черноты на меню
+// (фейд-ин, 0.6с) и более быстрый уход в игровой мир (фейд-аут, 0.35с).
+const fade = document.getElementById('fade');
+let fading = false;
+function startWithFade(skipNarrative){
+  if(fading) return;                          // защита от повторного клика во время перехода
+  fading = true;
+  music.leaveMenu();                          // меню-трек начинает гаснуть сразу по клику
+  fade.style.pointerEvents = 'auto';          // глушим клики, пока идёт переход
+  fade.style.transition = 'opacity .6s ease-in';
+  fade.style.opacity = '1';                   // меню плавно затемняется
+  setTimeout(() => {
+    start(skipNarrative);                     // мир запускается под чернотой, меню уже скрыто
+    fade.style.transition = 'opacity .35s ease-out';
+    fade.style.opacity = '0';                 // игровой мир проявляется быстрее
+    setTimeout(() => { fade.style.pointerEvents = 'none'; fading = false; }, 350);
+  }, 600);
+}
 // обёртки-стрелки, чтобы в start() не прилетел объект события как skipNarrative
-startBtn.addEventListener('click', () => start(false));
+startBtn.addEventListener('click', () => { sfx.tap(); startWithFade(false); });
 // отладочная кнопка: старт без вступительного диалога и обучения
 const startNoNarrativeBtn = document.getElementById('startNoNarrativeBtn');
-startNoNarrativeBtn.addEventListener('click', () => start(true));
+startNoNarrativeBtn.addEventListener('click', () => { sfx.tap(); startWithFade(true); });
+// кнопки на письме (стартовый экран): «На работу» и отладочная без лора
+document.getElementById('startWallBtn').addEventListener('click', () => { sfx.tap(); startWithFade(false); });
+document.getElementById('startWallDebugBtn').addEventListener('click', () => { sfx.tap(); startWithFade(true); });
 
+initDust();             // насыпать пылинки до первого кадра
+music.menu();           // в главном меню зациклено и приглушённо играет меню-трек
 requestAnimationFrame(loop);

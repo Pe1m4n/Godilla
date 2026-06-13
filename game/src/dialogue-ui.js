@@ -37,8 +37,16 @@ let shown = 0;             // сколько уже «напечатано» (д
 let textEl = null;         // HTML-элемент с текстом реплики (см. buildTextEl)
 let nameEl = null;         // HTML-элемент с именем говорящего у портрета
 
+// ── «болтовня» ворона: пружинный подскок на печать букв ──
+// hop — вертикальное смещение (px, минус = вверх), hopV — его скорость.
+// На каждую N-ю букву даём толчок вверх; пружина возвращает к нулю с лёгким отскоком.
+// Когда печать кончилась, толчков нет — ворон плавно замирает.
+let hop = 0, hopV = 0, bobChars = 0;
+const HOP_STIFF = 200;     // жёсткость пружины (выше — быстрее возврат)
+const HOP_DAMP  = 13;      // затухание (выше — меньше дрожит)
+
 // ── размеры подложки (натуральные пиксели спрайта; запас = реальные дим, пока грузится) ──
-const sprW = () => art.dialogBox ? art.dialogBox.width  : 400;
+const sprW = () => art.dialogBox ? art.dialogBox.width  : 432;
 const sprH = () => art.dialogBox ? art.dialogBox.height :  88;
 
 // геометрия окна в «дизайнерских» координатах (0..960 / 0..540)
@@ -151,10 +159,21 @@ export function dialogueClick(){
 // Печать текущей реплики во времени (зовётся каждый кадр, пока active).
 export function updateDialogue(dt){
   if(!active) return;
+  const c = DIALOGUE_CFG;
   if(shown < totalChars){
-    shown = Math.min(totalChars, shown + DIALOGUE_CFG.charsPerSec * dt);
+    shown = Math.min(totalChars, shown + c.charsPerSec * dt);
     syncText();
+    // на каждую N-ю новую букву — толчок ворона вверх
+    const nc = Math.floor(shown);
+    const kick = c.crow.hopAmp * Math.sqrt(HOP_STIFF); // толчок под нужную высоту прыжка
+    while(bobChars < nc){
+      bobChars++;
+      if(bobChars % c.crow.bobEvery === 0) hopV -= kick;
+    }
   }
+  // пружина (всегда, пока активен) — после печати ворон плавно оседает к нулю
+  hopV += (-HOP_STIFF * hop - HOP_DAMP * hopV) * dt;
+  hop  += hopV * dt;
 }
 
 // подготовить новую реплику к печати
@@ -162,6 +181,7 @@ function beginLine(){
   curText = lines[idx].text;
   totalChars = curText.length;
   shown = 0;
+  hop = 0; hopV = 0; bobChars = 0; // ворон начинает реплику в покое
   syncText();
   if(nameEl) nameEl.textContent = lines[idx].name; // имя говорящего у портрета
 }
@@ -178,6 +198,19 @@ export function drawDialogue(last){
   } else {
     cx.fillStyle = 'rgba(20,16,30,0.92)'; cx.fillRect(bx, by, bw, bh);
     cx.strokeStyle = '#e8dcc0'; cx.lineWidth = 2; cx.strokeRect(bx+2, by+2, bw-4, bh-4);
+  }
+
+  // ворон поверх пустой рамки портрета: подскакивает и кренится на печать (hop/hopV)
+  if(art.crow){
+    const cr = c.crow;
+    const cwx = bx + (cr.x + cr.w / 2) * c.scale;          // центр места ворона
+    const cwy = by + (cr.y + cr.h / 2) * c.scale + hop * c.scale;
+    const rot = Math.max(-cr.rotAmp, Math.min(cr.rotAmp, hopV * cr.rotAmp / 110));
+    cx.save();
+    cx.translate(cwx, cwy);
+    cx.rotate(rot);
+    cx.drawImage(art.crow, -cr.w * c.scale / 2, -cr.h * c.scale / 2, cr.w * c.scale, cr.h * c.scale);
+    cx.restore();
   }
 
   // спрайт-треугольник «дальше» справа внизу — только когда реплика допечатана; качается

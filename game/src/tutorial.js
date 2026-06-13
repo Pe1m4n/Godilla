@@ -25,11 +25,17 @@ let pending = false;  // обучение ещё не запускалось в 
 let demon = null;     // моб, которого подсвечиваем и на которого указываем
 let textEl = null;    // HTML-подсказка поверх холста (см. ниже, почему не на холсте)
 
-// модальное предупреждение (затемнение + текст по центру, закрывается кликом).
-// Сейчас используется один раз — когда игрок впервые «доставил» моба в город.
-let msgActive = false;     // показываем сообщение, мир заморожен
-let cityPending = false;   // предупреждение про город ещё не показывали в этой партии
-let msgEl = null;          // HTML-элемент сообщения
+// Модальное обучающее сообщение: затемнение + текст по центру. Закрывается либо любым
+// кликом (dismiss:'click'), либо когда игрок схватит цель (dismiss:'grab' — закрытие
+// инициирует game.js, вызывая dismissTutorialMessage). Каждое сообщение показывается
+// раз за партию (ключ в shownOnce). Подсветку «героя» сообщения (моб/циклоп/валун)
+// рисует game.js — у него все спрайты и render-код.
+let msgActive = false;       // показываем сообщение, мир заморожен
+let msgKey = null;           // какое именно сообщение (game.js по нему подсвечивает)
+let msgDismiss = 'click';    // 'click' — любой клик; 'grab' — захват цели (закрывает game.js)
+let enabledThisRun = true;   // включено ли обучение в этой партии
+const shownOnce = new Set(); // какие одноразовые сообщения уже показывали
+let msgEl = null, msgTitleEl = null, msgSubEl = null; // HTML-элемент сообщения и его строки
 
 export function initTutorial(env){
   ({ cx, W, H, FONT, sizeOf } = env);
@@ -66,7 +72,8 @@ function buildTextEl(){
 function showText(on){ if(textEl) textEl.style.display = on ? 'block' : 'none'; }
 
 // Модальное сообщение по центру: заголовок + пояснение, переносится по строкам.
-// Тоже HTML (тот же резон, что и подсказка). Текст из CFG.tutorial.cityTitle/citySub.
+// Тоже HTML (тот же резон, что и подсказка). Текст задаётся при показе (showMessage),
+// поэтому одно окно переиспользуется под разные подсказки (город, здоровяк, …).
 function buildMsgEl(){
   if(msgEl) return;
   const wrap = document.getElementById('wrap');
@@ -76,16 +83,12 @@ function buildMsgEl(){
     'position:absolute; left:50%; top:40%; transform:translate(-50%,-50%);'+
     'width:680px; max-width:90%; text-align:center; pointer-events:none; z-index:5; display:none;'+
     'font-family:'+FONT+'; line-height:1.7; text-shadow:2px 2px 0 #0a0812;';
-  const title = document.createElement('div');
-  title.style.cssText = 'font-size:13px; color:#ffe14d;';
-  title.textContent = CFG.tutorial.cityTitle;
-  msgEl.appendChild(title);
-  if(CFG.tutorial.citySub){
-    const sub = document.createElement('div');
-    sub.style.cssText = 'font-size:9px; color:#cfd2e6; line-height:1.9; margin-top:18px;';
-    sub.textContent = CFG.tutorial.citySub;
-    msgEl.appendChild(sub);
-  }
+  msgTitleEl = document.createElement('div');
+  msgTitleEl.style.cssText = 'font-size:13px; color:#ffe14d;';
+  msgEl.appendChild(msgTitleEl);
+  msgSubEl = document.createElement('div');
+  msgSubEl.style.cssText = 'font-size:9px; color:#cfd2e6; line-height:1.9; margin-top:18px;';
+  msgEl.appendChild(msgSubEl);
   wrap.appendChild(msgEl);
 }
 function showMsg(on){ if(msgEl) msgEl.style.display = on ? 'block' : 'none'; }
@@ -94,28 +97,37 @@ function showMsg(on){ if(msgEl) msgEl.style.display = on ? 'block' : 'none'; }
 // enabled — включать ли обучение в этой партии. По умолчанию берём из конфига;
 // отладочный старт «без диалогов и туторов» передаёт false и выключает обучение целиком.
 export function resetTutorial(enabled = CFG.tutorial.enabled){
+  enabledThisRun = enabled;
   pending = enabled; active = false; demon = null; showText(false);
-  cityPending = enabled; msgActive = false; showMsg(false);
+  shownOnce.clear();
+  msgActive = false; msgKey = null; showMsg(false);
 }
 
 export const tutorialActive = () => active;
 // мир заморожен (подсказка про первого моба ИЛИ модальное сообщение)
-export const tutorialFrozen   = () => active || msgActive;
+export const tutorialFrozen    = () => active || msgActive;
 export const tutorialMsgActive = () => msgActive;
+export const tutorialMsgKey     = () => msgKey;     // game.js по нему рисует подсветку
+export const tutorialMsgDismiss = () => msgDismiss; // 'click' | 'grab'
+export const tutorialDemon      = () => demon;
 
-// первый «заброс» моба в город — показать предупреждение и заморозить мир.
-// true = показали (первый раз); false = уже показывали (мир не морозим).
-export function tutorialCityBreach(){
-  if(!cityPending) return false;
-  cityPending = false; msgActive = true; showMsg(true);
+// Показать одноразовое модальное сообщение (раз за партию, по ключу). Замораживает мир.
+// dismiss: 'click' — любой клик закрывает; 'grab' — закрытие делает game.js при захвате цели.
+// true = показали; false = выключено / уже идёт обучение / уже показывали этот ключ.
+export function tutorialTryMessage(key, title, sub, dismiss = 'click'){
+  if(!enabledThisRun || active || msgActive || shownOnce.has(key)) return false;
+  shownOnce.add(key);
+  msgKey = key; msgDismiss = dismiss;
+  if(msgTitleEl) msgTitleEl.textContent = title || '';
+  if(msgSubEl){ msgSubEl.textContent = sub || ''; msgSubEl.style.display = sub ? 'block' : 'none'; }
+  msgActive = true; showMsg(true);
   return true;
 }
-// закрыть модальное сообщение (по клику) — мир оживает
+// закрыть модальное сообщение — мир оживает
 export function dismissTutorialMessage(){
   if(!msgActive) return;
-  msgActive = false; showMsg(false);
+  msgActive = false; msgKey = null; showMsg(false);
 }
-export const tutorialDemon  = () => demon;
 
 // первый моб вышел — заморозить мир и взять его целью. true = обучение началось
 export function tutorialOnFirstDemon(demons){
@@ -127,7 +139,24 @@ export function tutorialOnFirstDemon(demons){
 // обучение пройдено (игрок схватил подсвеченного моба)
 export function tutorialComplete(){ active = false; showText(false); }
 
-// тёмная маска под модальное сообщение (сам текст — HTML-элемент msgEl)
+// подсветка моба поверх маски: мягкое свечение + сам спрайт. Возвращает центр/размер.
+function highlightDemon(d){
+  const s = sizeOf(d);
+  const mx = d.x + s/2, my = d.y + s/2;
+  const glow = cx.createRadialGradient(mx, my, s*0.3, mx, my, s*1.7);
+  glow.addColorStop(0, 'rgba(255,247,210,0.22)');
+  glow.addColorStop(1, 'rgba(255,247,210,0)');
+  cx.fillStyle = glow;
+  cx.beginPath(); cx.arc(mx, my, s*1.7, 0, Math.PI*2); cx.fill();
+  cx.save();
+  cx.translate(mx, my);
+  if(d.flip) cx.scale(-1, 1);
+  cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s);
+  cx.restore();
+  return { mx, my, s };
+}
+
+// тёмная маска под модальное сообщение (текст — HTML msgEl, подсветку «героя» рисует game.js)
 export function drawTutorialMask(){
   cx.fillStyle = 'rgba(8,6,16,0.74)';
   cx.fillRect(0, 0, W, H);
@@ -142,22 +171,7 @@ export function drawTutorial(demons, last){
 
   const d = demon;
   if(!d || !demons.includes(d)) return;
-  const s = sizeOf(d);
-  const mx = d.x + s/2, my = d.y + s/2;
-
-  // мягкое свечение под мобом
-  const glow = cx.createRadialGradient(mx, my, s*0.3, mx, my, s*1.7);
-  glow.addColorStop(0, 'rgba(255,247,210,0.22)');
-  glow.addColorStop(1, 'rgba(255,247,210,0)');
-  cx.fillStyle = glow;
-  cx.beginPath(); cx.arc(mx, my, s*1.7, 0, Math.PI*2); cx.fill();
-
-  // моб поверх маски
-  cx.save();
-  cx.translate(mx, my);
-  if(d.flip) cx.scale(-1, 1);
-  cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s);
-  cx.restore();
+  const { mx, my, s } = highlightDemon(d);
 
   // белая стрелка из верхне-левого угла к мобу (диагональ 45° вниз-вправо),
   // покачивается по своей оси — «тычет» в моба

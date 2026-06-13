@@ -24,11 +24,15 @@ export const MUSIC_CFG = {
   // победный/проигрышный фейды отключены). false — вернётся полный сценарий ниже.
   onlyIntro: true,
 
-  intro:  'maksymmalko-medieval-irish-celtic-ireland-music-311693', // играет от старта до первого «huge»
-  combat: 'Blackmoor Tides Loop',                                   // играет от первого «huge» до конца
+  menu:    'desifreemusic-nordic-serenity-315546',                   // играет в главном меню / на экране конца
+  intro:   'maksymmalko-medieval-irish-celtic-ireland-music-311693', // играет от старта до первого «huge»
+  combat:  'Blackmoor Tides Loop',                                   // играет от первого «huge» до конца
+  ambient: 'ambient_wind',                                           // фоновый шум ветра — всю партию поверх музыки
 
+  menuVol:     0.35,  // громкость меню-трека (приглушённо)
   introVol:    0.7,   // громкость вступительного трека (0..1)
   combatVol:   0.7,   // громкость боевого трека (0..1)
+  ambientVol:  0.3,   // громкость фонового ветра (0..1)
   victoryFrac: 0.2,   // на победе боевой трек приглушается до этой доли своей громкости (0.2 = 20%)
 
   fadeIn:  1.5,   // сек — нарастание трека из тишины
@@ -103,14 +107,36 @@ function tick(t) {
 }
 
 export const music = {
-  // старт партии (и «Ещё раз»): вступительный трек с начала, боевой — выключить
+  // главное меню (и экран конца игры): зациклить меню-трек приглушённо, остальное — погасить
+  menu() {
+    const m = ensure(MUSIC_CFG.menu);
+    fadeTo(MUSIC_CFG.intro, 0, MUSIC_CFG.fadeOut);
+    fadeTo(MUSIC_CFG.combat, 0, MUSIC_CFG.fadeOut);
+    fadeTo(MUSIC_CFG.ambient, 0, MUSIC_CFG.fadeOut);
+    fadeTo(MUSIC_CFG.menu, MUSIC_CFG.menuVol, MUSIC_CFG.fadeIn);
+    // если меню-трек ещё ни разу не играл — начнём с начала
+    if (m && m.paused && m.currentTime === 0) m.currentTime = 0;
+  },
+
+  // клик «в игру»: меню-трек начинает плавно гаснуть прямо сейчас (до запуска партии).
+  // Вступительный трек подхватится позже, в startGame() — «после этого».
+  leaveMenu() {
+    fadeTo(MUSIC_CFG.menu, 0, MUSIC_CFG.fadeOut);
+  },
+
+  // старт партии (и «Ещё раз»): меню-трек уводим в фейд, вступительный — с начала,
+  // боевой — выключить, фоновый ветер — зациклить с начала и держать всю партию
   startGame() {
+    fadeTo(MUSIC_CFG.menu, 0, MUSIC_CFG.fadeOut); // меню-трек плавно гаснет
     const intro = ensure(MUSIC_CFG.intro);
     const combat = players[MUSIC_CFG.combat];
     if (combat) { combat.pause(); combat.volume = 0; }
     intended[MUSIC_CFG.combat] = 0; slope[MUSIC_CFG.combat] = 1e9;
     if (intro) intro.currentTime = 0;
     fadeTo(MUSIC_CFG.intro, MUSIC_CFG.introVol, MUSIC_CFG.fadeIn);
+    const ambient = ensure(MUSIC_CFG.ambient);
+    if (ambient) ambient.currentTime = 0;
+    fadeTo(MUSIC_CFG.ambient, MUSIC_CFG.ambientVol, MUSIC_CFG.fadeIn);
   },
 
   // появился первый «huge»: вступительный гаснет, боевой нарастает из тишины
@@ -124,6 +150,7 @@ export const music = {
 
   // победа: боевой трек приглушается до victoryFrac громкости (не в ноль)
   onVictory() {
+    fadeTo(MUSIC_CFG.ambient, 0, MUSIC_CFG.fadeOut); // фоновый ветер всегда гаснет
     if (MUSIC_CFG.onlyIntro) return; // режим «только вступительный» — трек играет дальше
     fadeTo(MUSIC_CFG.combat, MUSIC_CFG.combatVol * MUSIC_CFG.victoryFrac, MUSIC_CFG.fadeOut);
     fadeTo(MUSIC_CFG.intro, 0, MUSIC_CFG.fadeOut);
@@ -131,6 +158,7 @@ export const music = {
 
   // поражение: вся музыка плавно гаснет в тишину
   onDefeat() {
+    fadeTo(MUSIC_CFG.ambient, 0, MUSIC_CFG.fadeOut); // фоновый ветер всегда гаснет
     if (MUSIC_CFG.onlyIntro) return; // режим «только вступительный» — трек играет дальше
     fadeTo(MUSIC_CFG.combat, 0, MUSIC_CFG.fadeOut);
     fadeTo(MUSIC_CFG.intro, 0, MUSIC_CFG.fadeOut);
@@ -148,3 +176,16 @@ export const music = {
     startTick();
   },
 };
+
+// Автоплей: браузер не даёт играть звук до первого «жеста» пользователя. На старте
+// страницы menu() пытается завести меню-трек, но play() может быть отклонён. Ловим
+// первый клик/нажатие клавиши и до-запускаем все треки, которые должны звучать.
+function unlock(){
+  for (const name in intended){
+    const a = players[name];
+    if (a && !muted && intended[name] > 0 && a.paused) a.play().catch(() => {});
+  }
+  startTick();
+}
+window.addEventListener('pointerdown', unlock);
+window.addEventListener('keydown', unlock);
