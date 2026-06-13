@@ -34,11 +34,15 @@ export const CFG = {
     hold: 7,           // сколько секунд туча держит заряд, потом гаснет
   },
 
-  // Рог Гьяллархорн на вратах: клик трубит и подбрасывает орду вверх.
-  horn: {
-    cd: 14,            // перезарядка рога, сек
-    push: 320,         // боковой толчок (слабый — чуть от врат)
-    lift: 660,         // вертикальный подброс (сильный — кидает юнитов в воздух)
+  // Воздушные завихрения: время от времени в небе появляется спиральный вихрь
+  // (как грозовая туча), по нему кликаешь — в этой точке встаёт «торнадо»,
+  // которое втягивает орду к центру и подбрасывает вверх.
+  tornado: {
+    swirlMin: 12,      // минимум секунд до следующего завихрения
+    swirlMax: 22,      // максимум секунд
+    radius: 230,       // ширина зоны действия вокруг центра (только под иконкой, не вся карта)
+    pull: 360,         // сила втягивания мобов к центру (горизонтально)
+    lift: 780,         // вертикальный подброс (сильный — кидает в воздух)
   },
 
   // Удар схваченного моба об пол бьёт по площади всех, кто МЕНЬШЕ него (по 1 урону).
@@ -90,17 +94,34 @@ export const CFG = {
     bomber:{ px: 3.5, hp: 2, mtnDmg: 35, speedMin: 20, speedMax: 30, grabR: 32, score: 4,
              throwF: 0.22,   follow: 16, shakeHurt: 8,  shakeSplat: 14,
              boomDmg: 2, boomR: 95 },
+    // летающий: 2 HP, быстрый; парит в воздухе (air=1, высота flyMin..flyMax)
+    bat:   { px: 3,   hp: 2, mtnDmg: 12, speedMin: 70, speedMax: 95, grabR: 26, score: 3,
+             throwF: 0.28,   follow: 24, shakeHurt: 6,  shakeSplat: 10,
+             air: 1, flyMin: 120, flyMax: 220 },
+    // летающий-призрак: 1 HP, петляет (erratic) — трудно схватить
+    wisp:  { px: 2.5, hp: 1, mtnDmg: 8,  speedMin: 58, speedMax: 82, grabR: 22, score: 3,
+             throwF: 0.3,    follow: 26, shakeHurt: 5,  shakeSplat: 9,
+             air: 1, erratic: 1, flyMin: 110, flyMax: 240,
+             erraticY1: 64, erraticY2: 42, erraticX: 82 },
+    // дальний: доходит до рубежа (rangeAt·ширина) и обстреливает врата снарядами
+    caster:{ px: 3.5, hp: 2, mtnDmg: 10, speedMin: 22, speedMax: 30, grabR: 34, score: 5,
+             throwF: 0.2,    follow: 15, shakeHurt: 8,  shakeSplat: 14,
+             rangeAt: 0.52, fireEvery: 2.2, shotSpeed: 240, shotDmg: 5 },
+    // копатель: первую половину пути роет под землёй (не схватить), выныривает на emergeAt
+    mole:  { px: 3.5, hp: 3, mtnDmg: 22, speedMin: 16, speedMax: 24, grabR: 34, score: 4,
+             throwF: 0.2,    follow: 14, shakeHurt: 9,  shakeSplat: 15,
+             burrow: 1, burrowSpeed: 135, emergeAt: 0.5 },
   },
 
   cyclops: {
-    px: 9,            // масштаб спрайта (высота ≈ четверть экрана)
+    px: 15.3,         // масштаб спрайта (на 70% крупнее прежнего: тело без коллизии, бить надо в глаз)
     maxAlive: 1,      // босс/мини-босс: больше одного на экране не появляется
     hp: 20,
     speed: 12,        // скорость передвижения
     mtnDmg: 25,       // урон по вратам за один удар
     poundEvery: 2,    // секунд между ударами по вратам
     score: 15,        // очки за убийство
-    eyeDmgDiv: 900,   // (не используется: урон в глаз сейчас всегда 1)
+    eyeDmgDiv: 900,   // урон демона в глаз = HP * эффективная скорость / eyeDmgDiv
     shakeStep: 2.5,   // тряска камеры: шаг при ходьбе
     shakeHit: 8,      //   попадание в глаз
     shakePound: 16,   //   удар по вратам
@@ -166,22 +187,32 @@ export const CFG = {
     shockDmg:    { name:'Злая волна',      desc:'+1 урон взрывной волны', max:2, requires:'shockwave' },
   },
 
-  // ── волны: сколько, каких мобов и в каком порядке идёт ──
-  // every — интервал между выходами (сек); order — точная очередь выхода.
-  // Когда список кончился, последняя волна повторяется по кругу,
-  // ускоряясь на loopSpeedup за каждый повтор.
-  waves: {
-    pauseBetween: 2.5,   // передышка между волнами, сек
-    speedPerWave: 3,     // прибавка скорости демонам за каждую волну
-    loopSpeedup: 0.9,    // множитель интервала за каждый повтор последней волны
-    minEvery: 0.45,      // чаще этого не спавнит
-    list: [
-      { every: 1.5, order: ['small','small','dog','small','small','small','small'] },
-      { every: 1.3, order: ['small','dog','big','small','small','dog','big','small','small'] },
-      { every: 1.2, order: ['big','small','dog','huge','small','bomber','big','small','dog','small','big','small'] },
-      { every: 1.0, order: ['small','dog','cyclops','small','big','roller','small','huge','dog','big','bomber','small','small','big','small'] },
-      { every: 0.85, order: ['huge','small','dog','big','bomber','small','cyclops','small','dog','huge','big','roller','small','dog','big','small','huge','bomber','small','big','small'] },
+  // ── непрерывный поток врагов: не волны, а нарастающий со временем напор ──
+  // Сложность растёт от gameTime: чаще спавн, быстрее мобы, тяжёлые типы
+  // постепенно входят в игру и набирают вес. Циклоп выходит периодически как босс
+  // и спавнится НЕЗАВИСИМО от потока — обычные мобы идут всегда, не дожидаясь его смерти.
+  stream: {
+    startEvery: 1.6,    // интервал между спавнами в начале, сек
+    minEvery: 0.4,      // предел: чаще не спавнит (пик напора)
+    rampTime: 130,      // за сколько секунд интервал падает от startEvery до minEvery
+    speedPerSec: 0.2,   // прибавка к скорости моба за каждую секунду игры
+    threatEvery: 20,    // каждые N секунд растёт «уровень угрозы» (показатель в HUD)
+    // пул типов: from — со скольки секунд тип начинает появляться;
+    // weight — базовый вес в случайном выборе; grow — прибавка веса за секунду после разблокировки
+    pool: [
+      { type:'small',  from: 0,   weight: 10,  grow: 0    },
+      { type:'dog',    from: 8,   weight: 3,   grow: 0.02 },
+      { type:'big',    from: 22,  weight: 3,   grow: 0.03 },
+      { type:'bat',    from: 30,  weight: 2,   grow: 0.02 },
+      { type:'bomber', from: 40,  weight: 1.5, grow: 0.02 },
+      { type:'caster', from: 45,  weight: 1.2, grow: 0.015 },
+      { type:'wisp',   from: 50,  weight: 1.5, grow: 0.02 },
+      { type:'huge',   from: 55,  weight: 2,   grow: 0.03 },
+      { type:'mole',   from: 60,  weight: 1.2, grow: 0.015 },
+      { type:'roller', from: 70,  weight: 0.8, grow: 0.01 },
     ],
+    cyclopsFirst: 70,   // первый циклоп (сек от начала)
+    cyclopsEvery: 50,   // далее пытается выйти каждые ~N секунд (если на экране есть место)
   },
 
   // ── обучение (отключаемый модуль) ──
@@ -259,8 +290,35 @@ export const PALS_ROLLER = [
 export const PALS_BOMBER = [
   {b:'#2a2024', h:'#c0392b', W:'#ffcf3a', m:'#0a0608'},
 ];
+// ── летающие: крылатый силуэт (h — крылья по бокам) ──
+export const BAT_MAP = [
+  ".........",
+  "h..bbb..h",
+  "hh.bbb.hh",
+  "hhbbbbbhh",
+  ".bWbbbWb.",
+  ".bbbmbbb.",
+  "..bb.bb..",
+  ".........",
+  ".........",
+];
+export const PALS_BAT = [
+  {b:'#4a2a5e', h:'#1c0f26', W:'#ffd0f0', m:'#120618'}, // фиолетовая летучая тварь
+];
+export const PALS_WISP = [
+  {b:'#3a6e7a', h:'#16323a', W:'#d6fbff', m:'#0a1c20'}, // призрачно-бирюзовый
+];
+// дальний маг — тёмно-синий с жёлтым глазом
+export const PALS_CASTER = [
+  {b:'#2e4a8d', h:'#14233f', W:'#ffe14d', m:'#0e1a30'},
+];
+// копатель — землистый
+export const PALS_MOLE = [
+  {b:'#5a4326', h:'#2a1d10', W:'#ffe9a8', m:'#160d05'},
+];
 export const PALS = { small: PALS_SMALL, big: PALS_BIG, huge: PALS_HUGE,
-  dog: PALS_DOG, roller: PALS_ROLLER, bomber: PALS_BOMBER };
+  dog: PALS_DOG, roller: PALS_ROLLER, bomber: PALS_BOMBER,
+  bat: PALS_BAT, wisp: PALS_WISP, caster: PALS_CASTER, mole: PALS_MOLE };
 
 // ── циклоп ─────────────────────────────────────────────────────────
 // идёт боком (в профиль), глаз смотрит влево — в сторону врат
@@ -287,7 +345,7 @@ export const CYC_PX = CFG.cyclops.px;
 export const CYC_W = CYC_MAP[0].length * CYC_PX;
 export const CYC_H = CYC_MAP.length * CYC_PX;
 // глаз — единственное уязвимое место (центр и радиус в координатах спрайта)
-export const CYC_EYE = { x: 1.5*CYC_PX, y: 6.5*CYC_PX, r: 2*CYC_PX };
+export const CYC_EYE = { x: 1.5*CYC_PX, y: 6.5*CYC_PX, r: 1.3*CYC_PX };
 
 // ── заклинания: пиксельные иконки ──────────────────────────────────
 export const SPELL_MAPS = {
