@@ -9,7 +9,9 @@ import { loadImage } from './sprites.js';
 //  уже постоянные и лежат в assets/, импорт здесь правильнее.)
 // ────────────────────────────────────────────────────────────────────
 
-import skyUrl        from '../assets/sprites/sky.png';
+import skyUrl        from '../assets/sprites/sky-2.png';
+import mountainUrl   from '../assets/sprites/mountain.png';
+import tintUrl       from '../assets/sprites/Tint.png';
 import groundUrl     from '../assets/sprites/ground.png';
 import grassUrl      from '../assets/sprites/grass.png';
 import castleUrl     from '../assets/sprites/castle.png';
@@ -29,7 +31,7 @@ import smoke3Url      from '../assets/sprites/smoke-3.png';
 import smoke4Url      from '../assets/sprites/smoke-4.png';
 
 const FILES = {
-  sky: skyUrl, ground: groundUrl, grass: grassUrl, castle: castleUrl,
+  sky: skyUrl, mountains: mountainUrl, tint: tintUrl, ground: groundUrl, grass: grassUrl, castle: castleUrl,
   cloud1: cloud1Url, cloud2: cloud2Url, cloud3: cloud3Url,
   flagstock: flagstockUrl, flagmatter: flagmatterUrl,
   dialogBox: dialogBoxUrl, triangle: triangleUrl, crow: crowUrl,
@@ -53,7 +55,7 @@ export const cursorFrames = {};
 // сюда складываются загруженные картинки; draw() в game.js смотрит на них.
 // Пока картинка не догрузилась — null, и игра рисует запасной вариант.
 export const art = {
-  sky: null, ground: null, grass: null, castle: null,
+  sky: null, mountains: null, tint: null, ground: null, grass: null, castle: null,
   cloud1: null, cloud2: null, cloud3: null,
   flagstock: null, flagmatter: null,
   dialogBox: null, triangle: null, crow: null,

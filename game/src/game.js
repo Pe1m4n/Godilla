@@ -13,6 +13,7 @@ import {
   tutorialOnFirstDemon, tutorialComplete, drawTutorial,
   tutorialFrozen, tutorialMsgActive, tutorialMsgKey, tutorialMsgDismiss,
   tutorialTryMessage, dismissTutorialMessage, drawTutorialMask,
+  tutorialTick, tutorialMsgLocked, tutorialActiveLocked,
 } from './tutorial.js';
 import { initUIText, floatText, label, hideLabel } from './uitext.js';
 import {
@@ -154,6 +155,21 @@ const SMOKE = {
   growTime: 4.2,   // за сколько секунд клуб дорастает до полного размера
   alpha:    0.85,  // постоянная прозрачность (без проявления/затухания)
 };
+
+// ── вечерний оттенок (полноэкранный спрайт Tint) ─────────────────────
+// Со временем вечереет: спрайт всё заметнее. В начале не виден (непрозрачность 0),
+// затем со 2-й минуты игры плавно проявляется по 1% непрозрачности в минуту и к
+// 10-й минуте доходит до потолка 8% (т.е. прозрачность падает со 100% до 92%).
+// Привязан к gameTime — копится только в активной игре и сам сбрасывается при рестарте.
+const TINT = {
+  startMin: 2,    // с какой минуты начинает проявляться
+  perMin:   0.01, // прирост непрозрачности за минуту (1%)
+  maxAlpha: 0.08, // потолок непрозрачности (8% → прозрачность 92%), достигается к 10-й мин
+};
+function tintAlpha(){
+  const min = gameTime / 60;
+  return Math.max(0, Math.min(TINT.maxAlpha, (min - TINT.startMin) * TINT.perMin));
+}
 let smokePuffs = [];
 // у каждой трубы — свой таймер до следующей затяжки
 let smokeTimers = SMOKE.vents.map(() => rnd(0, SMOKE.every));
@@ -735,6 +751,25 @@ function tutorialScan(dt){
   return false;
 }
 
+// есть ли у текущего сообщения подсвеченный объект (у «города» — нет)
+function tutorialHasObject(){
+  return !!(msgHi && ((msgHi.demons && msgHi.demons.length) || msgHi.cyc));
+}
+// попал ли клик по подсвеченному объекту сообщения (моб — щедрый радиус, циклоп — по корпусу)
+function tutorialHitObject(p){
+  if(!msgHi) return false;
+  if(msgHi.demons) for(const d of msgHi.demons){
+    if(!demons.includes(d)) continue;
+    const s = sizeOf(d);
+    if(Math.hypot(p.x-(d.x+s/2), p.y-(d.y+s/2)) <= Math.max(TYPES[d.type].grabR, s) * 1.4) return true;
+  }
+  if(msgHi.cyc && cyclopes.includes(msgHi.cyc)){
+    const c = msgHi.cyc;
+    if(p.x >= c.x && p.x <= c.x+CYC_W && p.y >= c.y && p.y <= c.y+CYC_H) return true;
+  }
+  return false;
+}
+
 // захват цели «grab»-сообщения: попал по цели → выполняем захват и закрываем подсказку
 function tutorialGrab(p){
   const g = msgHi && msgHi.grab;
@@ -909,13 +944,39 @@ function openSkillChoice(){
   }
   choosing = true;
   const offer = pool.sort(() => Math.random() - .5).slice(0, 3);
+  const holdMs = (CFG.leveling.pickHold ?? 0.5) * 1000;
   skillCards.innerHTML = '';
   for(const s of offer){
     const btn = document.createElement('button');
     btn.className = 'skill-card';
+    // .hold-fill — полоска прогресса удержания (растёт слева направо за holdMs)
     btn.innerHTML = '<b>' + s.name + '</b>' + s.desc +
-      '<div class="lvl-tag">уровень ' + (sk(s.id)+1) + '/' + s.max + '</div>';
-    btn.addEventListener('click', () => pickSkill(s.id));
+      '<div class="lvl-tag">уровень ' + (sk(s.id)+1) + '/' + s.max + '</div>' +
+      '<div class="hold-fill"></div>';
+    const fill = btn.querySelector('.hold-fill');
+    let timer = null;
+    // зажатие: запускаем заливку и таймер выбора; выбор происходит по истечении holdMs
+    const start = e => {
+      e.preventDefault();
+      if(timer) return;
+      btn.classList.add('holding');
+      fill.style.transition = 'transform ' + holdMs + 'ms linear';
+      requestAnimationFrame(() => { fill.style.transform = 'scaleX(1)'; });
+      timer = setTimeout(() => { timer = null; pickSkill(s.id); }, holdMs);
+    };
+    // отпустил/увёл курсор раньше времени — отменяем выбор, заливка быстро спадает
+    const cancel = () => {
+      if(timer){ clearTimeout(timer); timer = null; }
+      btn.classList.remove('holding');
+      fill.style.transition = 'transform 120ms ease-out';
+      fill.style.transform = 'scaleX(0)';
+    };
+    btn.addEventListener('mousedown', start);
+    btn.addEventListener('mouseup', cancel);
+    btn.addEventListener('mouseleave', cancel);
+    btn.addEventListener('touchstart', start, { passive:false });
+    btn.addEventListener('touchend', cancel);
+    btn.addEventListener('touchcancel', cancel);
     skillCards.appendChild(btn);
   }
   lvlOverlay.classList.remove('hidden');
@@ -1226,18 +1287,23 @@ function onDown(e){
   const p = ptr(e);
   mouse.x = mouse.px = p.x; mouse.y = mouse.py = p.y;
   mouse.vx = mouse.vy = 0;
-  // открыто модальное обучающее сообщение: 'click' — закрыть любым кликом;
-  // 'grab' — закрыть, только если попал по подсвеченной цели (её и схватим)
+  // открыто модальное обучающее сообщение. Тутор проходится кликом по ПОДСВЕЧЕННОМУ
+  // объекту (а не любым кликом) — и только спустя skipLock секунд после появления,
+  // чтобы случайным нажатием его не пропустить. 'grab'-туторы при этом ещё и хватают
+  // цель; у «города» объекта нет — там закрывает любой клик.
   if(tutorialMsgActive()){
-    if(tutorialMsgDismiss() === 'grab') tutorialGrab(p);
-    else dismissTutorialMessage();
+    if(!tutorialMsgLocked()){
+      if(tutorialMsgDismiss() === 'grab') tutorialGrab(p);          // схватить цель → пройдено
+      else if(!tutorialHasObject()) dismissTutorialMessage();        // нет объекта (город) — любой клик
+      else if(tutorialHitObject(p)) dismissTutorialMessage();        // клик по подсвеченному объекту
+    }
     e.preventDefault();
     return;
   }
-  // обучение: можно только схватить выделенного моба — это и завершает обучение
+  // обучение первого моба: проходится захватом подсвеченного моба (после skipLock секунд)
   if(tutorialActive()){
     const d = tutorialDemon();
-    if(d && demons.includes(d) && d.state === 'walk'){
+    if(!tutorialActiveLocked() && d && demons.includes(d) && d.state === 'walk'){
       const s = sizeOf(d);
       const dist = Math.hypot(p.x-(d.x+s/2), p.y-(d.y+s/2));
       // радиус захвата щедрый, чтобы новичок легко попал по подсвеченному мобу
@@ -1470,6 +1536,7 @@ function loop(ts){
   updateDust(dt);   // пылинки парят всегда
   updateCursor(dt); // курсор анимируется всегда, чтобы успеть «сжаться» при хватании
   updateDialogue(dt); // печать реплики во времени (если идёт диалог)
+  tutorialTick(dt);   // копит время показа обучающего сообщения (для блокировки пропуска)
   // диалог и обучение замораживают мир (диалог играется первым, до обучения)
   if(running && !choosing && !tutorialFrozen() && !dialogueActive()) update(dt);
   else shake = 0; // мир на паузе/стопе — всегда гасим тряску камеры (см. CLAUDE.md)
@@ -2014,6 +2081,12 @@ function draw(){
     cx.fillStyle = '#dfe1f4'; cx.fillRect(-20,-20,W+40,H+40);
   }
 
+  // — дальние горы — слой над небом, но под всем остальным (полупрозрачный верх
+  //   спрайта оставляет небо видимым). Тот же overscan ±20px, что и у неба.
+  if(art.mountains){
+    cx.drawImage(art.mountains, -20, -20, W+40, H+40);
+  }
+
   // — гроза от молнии: небо затягивает тёмно-синим на время разряда —
   if(skyFlash > 0){
     const a = skyFlash;
@@ -2295,6 +2368,18 @@ function draw(){
   // всплывашки (урон/очки) рисуются HTML-слоем поверх холста — см. uitext.js
 
   cx.restore();
+
+  // — вечерний оттенок: поверх всей сцены, но ниже UI (валун в руке, обучение,
+  //   диалог, курсор). Рисуется после restore — без тряски камеры, в координатах
+  //   экрана, поэтому края не оголяются. Непрозрачность растёт со временем игры.
+  if(art.tint){
+    const a = tintAlpha();
+    if(a > 0){
+      cx.globalAlpha = a;
+      cx.drawImage(art.tint, 0, 0, W, H);
+      cx.globalAlpha = 1;
+    }
+  }
 
   // отобранный валун в руке — покачивается у курсора (поверх всего, без тряски)
   if(heldBoulder){
@@ -2642,9 +2727,10 @@ muteBtn.addEventListener('click', () => {
   muteBtn.blur(); // снять фокус, чтобы пробел/Enter не «нажимали» кнопку снова
 });
 
-// skipNarrative — отладочный старт «без диалогов и туторов»: вступительный диалог
-// не запускается, обучение выключено на всю партию (тумблеры конфига игнорируются).
-function start(skipNarrative = false){
+// Старт партии. Флаги (любой можно выключить независимо):
+//   skipTutorial — обучение выключено на всю партию (тумблер конфига игнорируется)
+//   skipDialogue — вступительный диалог ворона не запускается
+function start({ skipTutorial = false, skipDialogue = false } = {}){
   demons=[]; puddles=[]; particles=[]; cyclopes=[]; shockwaves=[];
   bolts=[]; boulders=[]; windStreaks=[]; shots=[]; tornadoes=[]; heldBoulder=null; skyFlash=0;
   swirls=[]; nextSwirl = rnd(CFG.tornado.swirlMin, CFG.tornado.swirlMax);
@@ -2658,7 +2744,7 @@ function start(skipNarrative = false){
   killSinceRepair = 0; usedSecondWind = false;
   afterFirstPending = false; tutDemon = null; afterFirstTimer = 0; // второй диалог ворона ещё не показан
   stats = newStats();
-  resetTutorial(skipNarrative ? false : CFG.tutorial.enabled);
+  resetTutorial(skipTutorial ? false : CFG.tutorial.enabled);
   msgHi = null; cycTutT = 0;
   scoreEl.textContent='0'; hpFill.style.width='100%'; threatEl.textContent='1';
   updateXPBar();
@@ -2672,8 +2758,7 @@ function start(skipNarrative = false){
   music.startGame();
   // вступительный диалог: пока он идёт, мир заморожен (см. цикл). Кончится —
   // выйдет первый моб и подхватит обучение. Тумблер — DIALOGUE_CFG.enabled.
-  // При отладочном старте диалог не запускаем — игра начинается сразу.
-  if(!skipNarrative) startDialogue('intro');
+  if(!skipDialogue) startDialogue('intro');
 }
 // сводка партии → game/sessions.jsonl (dev-эндпоинт из vite.config.js). В сборке тихо падает.
 function logSession(){
@@ -2716,14 +2801,13 @@ function gameOver(){
     'Но сколько луж ты после себя оставил!';
   ovScore.textContent = 'Очки: ' + score;
   ovScore.classList.remove('hidden');
-  startBtn.textContent = 'Ещё раз';
   overlay.classList.remove('hidden');
 }
 // Переход меню→игра через чёрную шторку: медленный наплыв черноты на меню
 // (фейд-ин, 0.6с) и более быстрый уход в игровой мир (фейд-аут, 0.35с).
 const fade = document.getElementById('fade');
 let fading = false;
-function startWithFade(skipNarrative){
+function startWithFade(opts){
   if(fading) return;                          // защита от повторного клика во время перехода
   fading = true;
   music.leaveMenu();                          // меню-трек начинает гаснуть сразу по клику
@@ -2731,7 +2815,7 @@ function startWithFade(skipNarrative){
   fade.style.transition = 'opacity .6s ease-in';
   fade.style.opacity = '1';                   // меню плавно затемняется
   setTimeout(() => {
-    start(skipNarrative);                     // мир запускается под чернотой, меню уже скрыто
+    start(opts);                              // мир запускается под чернотой, меню уже скрыто
     fade.style.transition = 'opacity .35s ease-out';
     fade.style.opacity = '0';                 // игровой мир проявляется быстрее
     setTimeout(() => { fade.style.pointerEvents = 'none'; fading = false; }, 350);
@@ -2743,14 +2827,15 @@ function startWithFade(skipNarrative){
 document.addEventListener('click', (e) => {
   if(e.target.closest('button')) sfx.tap();
 });
-// обёртки-стрелки, чтобы в start() не прилетел объект события как skipNarrative
-startBtn.addEventListener('click', () => startWithFade(false));
-// отладочная кнопка: старт без вступительного диалога и обучения
+// три кнопки на экране проигрыша: полный рестарт / без тутора / без тутора и диалогов
+startBtn.addEventListener('click', () => startWithFade({}));
+const startNoTutBtn = document.getElementById('startNoTutBtn');
+startNoTutBtn.addEventListener('click', () => startWithFade({ skipTutorial: true }));
 const startNoNarrativeBtn = document.getElementById('startNoNarrativeBtn');
-startNoNarrativeBtn.addEventListener('click', () => startWithFade(true));
+startNoNarrativeBtn.addEventListener('click', () => startWithFade({ skipTutorial: true, skipDialogue: true }));
 // кнопки на письме (стартовый экран): «На работу» и отладочная без лора
-document.getElementById('startWallBtn').addEventListener('click', () => startWithFade(false));
-document.getElementById('startWallDebugBtn').addEventListener('click', () => startWithFade(true));
+document.getElementById('startWallBtn').addEventListener('click', () => startWithFade({}));
+document.getElementById('startWallDebugBtn').addEventListener('click', () => startWithFade({ skipTutorial: true, skipDialogue: true }));
 
 initDust();             // насыпать пылинки до первого кадра
 music.menu();           // в главном меню зациклено и приглушённо играет меню-трек

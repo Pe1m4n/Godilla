@@ -49,11 +49,17 @@
     <canvas id="dust" width="960" height="540"></canvas>
   </div>
   <div id="overlay" class="hidden">
-    <h1 id="ov-title">Врата Асгарда</h1>
-    <p id="ov-text"></p>
-    <div class="bigscore hidden" id="ov-score"></div>
-    <button id="startBtn">Играть</button>
-    <button id="startNoNarrativeBtn" class="debug-btn" title="Отладка: пропустить вступительный диалог и обучение">Начать без диалогов и туторов</button>
+    <div id="ov-panel">
+      <div id="ov-crow"></div>
+      <h1 id="ov-title">Врата пали…</h1>
+      <p id="ov-text"></p>
+      <div class="bigscore hidden" id="ov-score"></div>
+      <div id="ov-buttons">
+        <button id="startBtn">Начать заново</button>
+        <button id="startNoTutBtn">Начать заново без тутора</button>
+        <button id="startNoNarrativeBtn">Начать заново без тутора и диалогов</button>
+      </div>
+    </div>
   </div>
   <div id="lvlOverlay" class="hidden">
     <h1>Новый уровень!</h1>

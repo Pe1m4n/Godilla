@@ -33,6 +33,8 @@ let textEl = null;    // HTML-подсказка поверх холста (см
 let msgActive = false;       // показываем сообщение, мир заморожен
 let msgKey = null;           // какое именно сообщение (game.js по нему подсвечивает)
 let msgDismiss = 'click';    // 'click' — любой клик; 'grab' — захват цели (закрывает game.js)
+let msgT = 0;                // сколько секунд сообщение на экране (для блокировки пропуска)
+let actT = 0;                // сколько секунд показывается тутор первого моба (та же блокировка)
 let enabledThisRun = true;   // включено ли обучение в этой партии
 const shownOnce = new Set(); // какие одноразовые сообщения уже показывали
 let msgEl = null, msgTitleEl = null, msgSubEl = null; // HTML-элемент сообщения и его строки
@@ -110,6 +112,15 @@ export const tutorialMsgActive = () => msgActive;
 export const tutorialMsgKey     = () => msgKey;     // game.js по нему рисует подсветку
 export const tutorialMsgDismiss = () => msgDismiss; // 'click' | 'grab'
 export const tutorialDemon      = () => demon;
+// первые skipLock секунд по объекту нельзя кликнуть — защита от случайного нажатия
+export const tutorialMsgLocked    = () => msgActive && msgT < (CFG.tutorial.skipLock ?? 0);
+export const tutorialActiveLocked = () => active   && actT < (CFG.tutorial.skipLock ?? 0);
+
+// тикает каждый кадр (даже на паузе) — копит время показа тутора/сообщения
+export function tutorialTick(dt){
+  if(msgActive) msgT += dt;
+  if(active) actT += dt;
+}
 
 // Показать одноразовое модальное сообщение (раз за партию, по ключу). Замораживает мир.
 // dismiss: 'click' — любой клик закрывает; 'grab' — закрытие делает game.js при захвате цели.
@@ -117,7 +128,7 @@ export const tutorialDemon      = () => demon;
 export function tutorialTryMessage(key, title, sub, dismiss = 'click'){
   if(!enabledThisRun || active || msgActive || shownOnce.has(key)) return false;
   shownOnce.add(key);
-  msgKey = key; msgDismiss = dismiss;
+  msgKey = key; msgDismiss = dismiss; msgT = 0;
   if(msgTitleEl) msgTitleEl.textContent = title || '';
   if(msgSubEl){ msgSubEl.textContent = sub || ''; msgSubEl.style.display = sub ? 'block' : 'none'; }
   msgActive = true; showMsg(true);
@@ -132,7 +143,7 @@ export function dismissTutorialMessage(){
 // первый моб вышел — заморозить мир и взять его целью. true = обучение началось
 export function tutorialOnFirstDemon(demons){
   if(!pending || !demons.length) return false;
-  active = true; pending = false; demon = demons[0]; showText(true);
+  active = true; pending = false; demon = demons[0]; actT = 0; showText(true);
   return true;
 }
 

@@ -36,11 +36,21 @@ canvas{
 #lvlOverlay p{color:#cfc9e6;font-size:15px;}
 #skillCards{display:flex;gap:14px;}
 .skill-card{
+  position:relative;overflow:hidden; /* для полоски удержания .hold-fill */
   font-family:var(--font-body);width:200px;min-height:130px;padding:12px;
   background:var(--ui);color:var(--ink);border:3px solid var(--ink);
   cursor:pointer;text-align:left;font-size:13px;line-height:1.5;
+  user-select:none;
 }
 .skill-card:hover{background:#ffd76a;}
+/* пока держишь ЛКМ — карта «вдавливается» и подсвечивается, идёт выбор */
+.skill-card.holding{background:#ffd76a;transform:scale(.97);}
+/* полоса прогресса удержания: тянется слева направо за время CFG.leveling.pickHold */
+.skill-card .hold-fill{
+  position:absolute;left:0;bottom:0;width:100%;height:6px;
+  background:#d4a017;transform:scaleX(0);transform-origin:left center;
+  pointer-events:none;
+}
 .skill-card b{display:block;font-family:var(--font-pixel);font-size:10px;line-height:1.5;margin-bottom:8px;text-transform:uppercase;}
 .skill-card .lvl-tag{margin-top:8px;color:#7a4a32;font-size:12px;}
 /* ── стартовый экран: фон-комната + письмо на весь нижний край ── */
@@ -97,26 +107,41 @@ canvas{
 #startWallBtn{font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:10px 12px;}
 /* отладочная кнопка — мельче и приглушённая, её потом уберём */
 #letter button.debug-btn{font-size:7px;line-height:1.5;padding:6px 10px;color:#c9bca4;}
+/* экран проигрыша: затемнение + деревянная панель в тон диалогового окна ворона */
 #overlay{
-  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  background:rgba(26,22,38,.78);color:var(--ui);text-align:center;gap:18px;
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(26,22,38,.78);
 }
-#overlay h1{font-family:var(--font-pixel);font-size:26px;letter-spacing:1px;line-height:1.4;text-transform:uppercase;}
-/* пиксельный шрифт плотнее Rubik — кегль меньше, межстрочный больше, поле шире */
-#overlay p{font-family:var(--font-pixel);font-size:10px;max-width:640px;line-height:2;color:#cfc9e6;}
-#overlay button{
-  font-family:var(--font-pixel);font-size:14px;letter-spacing:1px;text-transform:uppercase;
-  padding:12px 30px;background:var(--ground);color:var(--ui);
-  border:3px solid var(--ui);cursor:pointer;
+#ov-panel{
+  display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;
+  background:#2e2316;border:4px solid #5a4226;color:#f4ead2;
+  padding:24px 34px 28px;max-width:600px;
+  box-shadow:0 14px 44px rgba(0,0,0,.5);
 }
-#overlay button:hover{background:#3aa3a3;}
-#overlay button:focus-visible{outline:3px dashed var(--ui);outline-offset:3px;}
-/* отладочная кнопка — приглушённая и помельче, чтобы не путали с основной «Играть» */
-#overlay button.debug-btn{
-  font-size:9px;padding:7px 16px;background:transparent;
-  color:#8a86a0;border:2px dashed #4a4660;
+/* ворон — пиксельный спрайт 15×15, увеличиваем без сглаживания */
+#ov-crow{
+  width:96px;height:96px;margin-top:-2px;
+  background:url(../assets/sprites/crow.png) center/contain no-repeat;
+  image-rendering:pixelated;
 }
-#overlay button.debug-btn:hover{background:rgba(255,255,255,.06);color:#cfc9e6;}
+#overlay h1{font-family:var(--font-pixel);font-size:22px;letter-spacing:1px;line-height:1.4;text-transform:uppercase;}
+#overlay p{font-family:var(--font-pixel);font-size:10px;max-width:520px;line-height:2;color:#cdbfa6;}
+/* кнопки — как на стартовом письме (главное меню): тёмное дерево, пиксельный шрифт */
+#ov-buttons{display:flex;flex-direction:column;align-items:stretch;gap:9px;width:100%;margin-top:4px;}
+#ov-buttons button{
+  font-family:var(--font-pixel);cursor:pointer;border:none;
+  background:#3f3124;color:#f1e7d4;
+  font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:11px 14px;
+}
+#ov-buttons button:hover{background:#665443;}
+#ov-buttons button:focus-visible{outline:2px dashed #f1e7d4;outline-offset:2px;}
+/* варианты «без тутора» — мельче и приглушённее основной «Начать заново» */
+#ov-buttons button#startNoTutBtn,
+#ov-buttons button#startNoNarrativeBtn{
+  font-size:9px;padding:9px 12px;background:#33271c;color:#c9bca4;
+}
+#ov-buttons button#startNoTutBtn:hover,
+#ov-buttons button#startNoNarrativeBtn:hover{background:#4a3a29;color:#f1e7d4;}
 #muteBtn{
   position:absolute;left:12px;bottom:14px;z-index:5;
   font-family:var(--font-body);font-size:18px;line-height:1;
