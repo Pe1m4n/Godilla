@@ -40,9 +40,9 @@ const sizeOf = d => 9 * TYPES[d.type].px;
 // ── облака: плывут на фоне (x,y в дизайн-координатах, spd — px/сек, минус = влево) ──
 // charge: null | 'storm' — заряженную грозовую тучу можно кликнуть (см. triggerCloud)
 const clouds = [
-  { key:'cloud1', x: 240, y: 64,  spd: -9,  charge:null, chargeT:0 },
-  { key:'cloud2', x: 560, y: 120, spd: -6,  charge:null, chargeT:0 },
-  { key:'cloud3', x: 830, y: 52,  spd: -12, charge:null, chargeT:0 },
+  { key:'cloud1', x: 240, y: 64,  spd: -27, charge:null },
+  { key:'cloud2', x: 560, y: 120, spd: -18, charge:null },
+  { key:'cloud3', x: 830, y: 52,  spd: -36, charge:null },
 ];
 let nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
 const cloudW = c => art[c.key] ? art[c.key].width  : 210;
@@ -51,19 +51,19 @@ function updateClouds(dt){
   for(const c of clouds){
     const w = cloudW(c);
     c.x += c.spd * dt;
+    // грозовая туча держит заряд, пока не доплывёт до башни — там гаснет (шанс упущен)
+    if(c.charge && c.x + w/2 <= WALL.x) c.charge = null;
     if(c.x + w < -40) c.x = W + 40;       // уплыло влево — заводим справа
     else if(c.x > W + 40) c.x = -w - 40;
-    if(c.charge){ c.chargeT -= dt; if(c.chargeT <= 0) c.charge = null; }
   }
-  // время от времени заряжаем одно из спокойных облаков (только в бою)
+  // время от времени заряжаем спокойное облако (только в бою; нужно место до башни)
   if(running && !choosing){
     nextCharge -= dt;
     if(nextCharge <= 0){
-      const idle = clouds.filter(c => !c.charge);
+      const idle = clouds.filter(c => !c.charge && c.x + cloudW(c)/2 > WALL.x + 140);
       if(idle.length){
         const c = idle[(Math.random()*idle.length)|0];
         c.charge = 'storm';
-        c.chargeT = CFG.sky.hold;
         floaties.push({ x: c.x + cloudW(c)/2, y: c.y + cloudH(c)/2,
           txt: 'ГРОЗА — КЛИКНИ!', life: 1.8, col: '#2a3a7a' });
       }
@@ -76,7 +76,7 @@ function updateClouds(dt){
 function triggerCloud(c){
   const cxp = c.x + cloudW(c)/2, cyp = c.y + cloudH(c)*0.6;
   castLightning(cxp, cyp, 0, 1);
-  c.charge = null; c.chargeT = 0;
+  c.charge = null;
 }
 
 // ── раскладка флага (тюнинг) ──
@@ -179,7 +179,7 @@ function spawnDemon(type){
   demons.push(d);
 }
 
-// моб, улетевший за край экрана, заходит в бой заново справа (с теми же ХП)
+// моб, переживший вылет за край экрана, заходит в бой заново справа (ХП уже снижено при вылете)
 function returnFromOffscreen(d){
   const s = sizeOf(d);
   d.state = 'walk';
@@ -194,6 +194,28 @@ function returnFromOffscreen(d){
 // медленнее SPD_LIGHT — просто стук без урона.
 function impactDamage(speed){
   return speed >= SPD_LIGHT ? 1 : 0;
+}
+
+// удар схваченного моба об пол: бьёт по площади всех, кто МЕНЬШЕ него (по 1 урону).
+// Вызывается только при ударе рукой об землю — не при приземлении брошенного.
+function slamSmaller(d){
+  const S = CFG.slam;
+  const ds = sizeOf(d);
+  const cx0 = d.x + ds/2;
+  let hit = false;
+  for(const o of [...demons]){
+    if(o === d || o.state==='held' || o.state==='offscreen' || o.flash>0 || !demons.includes(o)) continue;
+    if(sizeOf(o) >= ds) continue; // достаётся только меньшим
+    const os = sizeOf(o);
+    if(Math.hypot(o.x+os/2 - cx0, o.y+os/2 - GROUND_Y) <= S.radius){
+      hurt(o, S.dmg, 400);
+      hit = true;
+    }
+  }
+  if(hit){
+    shockwaves.push({ x: cx0, y: GROUND_Y, r: 8, max: S.radius, life: .35 });
+    shake = Math.max(shake, 4);
+  }
 }
 
 function hurt(d, dmg, sp){
@@ -790,7 +812,11 @@ function update(dt){
         if(!d.grounded){
           d.grounded = true;
           const dmg = impactDamage(d.swing);
-          if(dmg > 0){ hurt(d, dmg, d.swing); d.swing = 0; }
+          if(dmg > 0){
+            slamSmaller(d);        // ударная волна по меньшим (до урона себе — d ещё жив)
+            hurt(d, dmg, d.swing);
+            d.swing = 0;
+          }
           else sfx.thud();
         }
         // лёгкое "вдавливание" — сплющивается
@@ -822,12 +848,14 @@ function update(dt){
       d.x += d.vx * dt;
       d.y += d.vy * dt;
       d.rot += d.rotV * dt * 4;
-      // улетел далеко вбок за экран — не гибнет, уходит «на возврат»
+      // улетел далеко вбок за экран — получает урон; выжил → уходит «на возврат», нет → гибнет
       const M = CFG.offscreen.margin;
       if(d.x > W + M || d.x + s < -M){
+        d.armed = false; d.hitsLeft = 0;
+        hurt(d, CFG.offscreen.dmg, 0);
+        if(!demons.includes(d)) continue; // не пережил вылет — погиб
         d.state = 'offscreen';
         d.returnT = CFG.offscreen.returnDelay;
-        d.armed = false; d.hitsLeft = 0;
         continue;
       }
 
