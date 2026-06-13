@@ -40,6 +40,8 @@ const CASTLE_SINK = 6;           // на сколько пикселей опу�
 const WALL = { x: MOUNTAIN_X, top: 138 };
 // Верх каменной башни: горизонтальная поверхность, об которую летящие юниты бьются сверху.
 const TOWER_ROOF = { left: 72, right: MOUNTAIN_X, y: WALL.top };
+const FIRE = CFG.fire;
+const BRAZIER = FIRE.brazier;
 
 // слоты заклинаний — внизу экрана по центру (панель сейчас отключена, см. drawSpellUI)
 const SLOT = CFG.spells.slotSize, SLOT_GAP = 16;
@@ -201,12 +203,14 @@ function spawnDemon(type){
     flash: 0,                // вспышка при уроне
     grounded: true,          // для драг-ударов об землю
     armed: false,            // «заряжен» броском: наносит урон, пока не коснулся земли
+    noEyeDmg: false,         // торнадо заряжает падение, но не должно бить циклопа в глаз
     hitsLeft: 0,             // сколько мобов ещё может сшибить за этот бросок (скилл «Таран»)
     cycHit: 0,               // таймер: недавно отскочил от циклопа (защита от болтанки между двумя)
     swing: 0,                // пик скорости замаха в руке (затухает) — по нему считается удар об землю/стену
     swingVX: 0, swingVY: 0,  // вектор скорости в момент пика — для броска, если курсор уже притормозил
     walled: false,           // уже упёрся в стену замка (защита от стука каждый кадр)
     roofed: false,           // уже лежит/упёрся в крышу башни
+    burnT: 0, burnTick: 0, burnFx: 0, fireBurstReady: false,
     hasBoulder: type === 'roller', // носильщик идёт с валуном, пока его не отобрали
     flip: Math.random()<.5,
   };
@@ -227,7 +231,7 @@ function returnFromOffscreen(d){
   d.state = 'walk';
   d.x = W + 10; d.y = GROUND_Y - s;
   d.vx = d.vy = 0; d.rot = 0; d.rotV = 0;
-  d.armed = false; d.hitsLeft = 0; d.noDmg = false; d.grounded = true;
+  d.armed = false; d.noEyeDmg = false; d.hitsLeft = 0; d.noDmg = false; d.grounded = true;
   d.swing = 0; d.walled = false; d.roofed = false;
 }
 
@@ -285,6 +289,7 @@ function startAirReturn(d){
   d.vx = d.vy = 0;
   d.rotV = 0;
   d.armed = false;
+  d.noEyeDmg = false;
   d.hitsLeft = 0;
   d.noDmg = false;
   d.grounded = false;
@@ -309,6 +314,142 @@ function overlapsTowerRoof(d, s){
 function hitsTowerRoofFromAbove(d, s, prevY){
   return d.vy >= 0 && overlapsTowerRoof(d, s) &&
     prevY + s <= TOWER_ROOF.y && d.y + s >= TOWER_ROOF.y;
+}
+
+function burning(e){
+  return (e.burnT || 0) > 0;
+}
+
+function flameCol(){
+  const c = FIRE.colors;
+  return c[(Math.random() * c.length) | 0];
+}
+
+function emitFireParticles(x, y, n, power = 1){
+  for(let i = 0; i < n; i++){
+    particles.push({
+      x, y,
+      vx: rnd(-220, 220) * power,
+      vy: rnd(-360, -60) * power,
+      col: flameCol(),
+      life: rnd(.35, .85),
+      size: rnd(2, 5),
+      fire: true,
+    });
+  }
+}
+
+function igniteDemon(d, source = 'spread'){
+  if(!demons.includes(d) || d.state === 'offscreen' || d.state === 'burrow') return;
+  const first = !burning(d);
+  const chargeFromBrazier = source === 'brazier' && !d.fireBurstReady;
+  d.burnT = Math.max(d.burnT || 0, FIRE.duration);
+  d.burnTick = first ? FIRE.firstTick : (d.burnTick || FIRE.tickEvery);
+  d.burnFx = 0;
+  if(source === 'brazier') d.fireBurstReady = true;
+  const s = sizeOf(d);
+  if(first || chargeFromBrazier){
+    emitFireParticles(d.x + s/2, d.y + s*0.45, first ? FIRE.igniteParticles : Math.ceil(FIRE.igniteParticles/2), 0.7);
+  }
+  if(first) floatText(d.x + s/2, d.y - 12, 'ГОРИТ!', FIRE.colors[2] || FIRE.colors[0], 1);
+}
+
+function igniteCyclops(c){
+  if(!cyclopes.includes(c)) return;
+  const first = !burning(c);
+  c.burnT = Math.max(c.burnT || 0, FIRE.duration);
+  c.burnTick = first ? FIRE.firstTick : (c.burnTick || FIRE.tickEvery);
+  c.burnFx = 0;
+  if(first) emitFireParticles(c.x + CYC_W*0.45, c.y + CYC_H*0.35, FIRE.igniteParticles, 0.8);
+  if(first) floatText(c.x + CYC_W/2, c.y - 18, 'ГОРИТ!', FIRE.colors[2] || FIRE.colors[0], 1);
+}
+
+function updateDemonBurn(d, dt){
+  if(!burning(d)) return true;
+  d.burnT -= dt;
+  d.burnTick -= dt;
+  d.burnFx -= dt;
+  const s = sizeOf(d);
+  if(d.burnFx <= 0){
+    d.burnFx = FIRE.trailEvery;
+    particles.push({
+      x: d.x + s*rnd(.25,.75),
+      y: d.y + s*rnd(.1,.55),
+      vx: rnd(-35,35),
+      vy: rnd(-90,-20),
+      col: flameCol(),
+      life: rnd(.2,.45),
+      size: rnd(2,4),
+      fire: true,
+    });
+  }
+  while(d.burnTick <= 0 && demons.includes(d)){
+    d.burnTick += FIRE.tickEvery;
+    hurt(d, FIRE.tickDmg, 220);
+  }
+  if(!demons.includes(d)) return false;
+  if(d.burnT <= 0){
+    d.burnT = 0;
+    d.fireBurstReady = false;
+  }
+  return true;
+}
+
+function updateCyclopsBurn(c, dt){
+  if(!burning(c)) return true;
+  c.burnT -= dt;
+  c.burnTick -= dt;
+  c.burnFx -= dt;
+  if(c.burnFx <= 0){
+    c.burnFx = FIRE.trailEvery;
+    particles.push({
+      x: c.x + rnd(CYC_W*.18, CYC_W*.82),
+      y: c.y + rnd(CYC_H*.08, CYC_H*.65),
+      vx: rnd(-45,45),
+      vy: rnd(-110,-25),
+      col: flameCol(),
+      life: rnd(.2,.5),
+      size: rnd(2,5),
+      fire: true,
+    });
+  }
+  while(c.burnTick <= 0 && cyclopes.includes(c)){
+    c.burnTick += FIRE.tickEvery;
+    hitCyclops(c, FIRE.tickDmg);
+  }
+  if(!cyclopes.includes(c)) return false;
+  if(c.burnT <= 0) c.burnT = 0;
+  return true;
+}
+
+function circleHitsRect(cx0, cy0, r, x, y, w, h){
+  const px = Math.max(x, Math.min(cx0, x + w));
+  const py = Math.max(y, Math.min(cy0, y + h));
+  return Math.hypot(cx0 - px, cy0 - py) <= r;
+}
+
+function overlapsBrazier(d, s){
+  return circleHitsRect(BRAZIER.x, BRAZIER.y, BRAZIER.r, d.x, d.y, s, s);
+}
+
+function fireImpactDamage(base, d, wasArmed, sp){
+  return wasArmed && burning(d) && sp >= SPD_LIGHT ? base + FIRE.impactBonus : base;
+}
+
+function fireBurst(x, y, src){
+  if(!src.fireBurstReady) return;
+  src.fireBurstReady = false;
+  emitFireParticles(x, y - 4, FIRE.spreadParticles, 1.15);
+  shockwaves.push({x, y, r: 10, max: FIRE.spreadRadius, life: .38});
+  shake = Math.max(shake, 8);
+  for(const o of [...demons]){
+    if(o === src || o.state === 'offscreen' || o.state === 'burrow' || !demons.includes(o)) continue;
+    const os = sizeOf(o);
+    if(Math.hypot(o.x+os/2 - x, o.y+os/2 - y) <= FIRE.spreadRadius) igniteDemon(o, 'spread');
+  }
+  for(const c of [...cyclopes]){
+    if(Math.hypot(c.x+CYC_W/2 - x, c.y+CYC_H/2 - y) <= FIRE.spreadRadius + CYC_W*0.2) igniteCyclops(c);
+  }
 }
 
 // удар схваченного моба об пол: бьёт по площади всех, кто МЕНЬШЕ него (по 1 урону).
@@ -427,6 +568,7 @@ function spawnCyclops(){
     x: W + 10, y: GROUND_Y - CYC_H,
     hp: CFG.cyclops.hp, t: rnd(0,10), step: 0.8,
     state: 'walk', poundT: 0, eyeFlash: 0, freeze: 0,
+    burnT: 0, burnTick: 0, burnFx: 0,
   });
   floatText(W-90, GROUND_Y - CYC_H - 24, 'ЦИКЛОП!', '#c0392b', 1.6);
 }
@@ -526,7 +668,7 @@ function openSkillChoice(){
   // аккуратно выпускаем демона из руки
   if(held){
     held.state = 'fly'; held.vx = held.vy = 0;
-    held.armed = false; held.noDmg = true;
+    held.armed = false; held.noEyeDmg = false; held.noDmg = true;
     held = null; cv.classList.remove('grabbing');
   }
   const pool = availableSkills();
@@ -602,7 +744,7 @@ function triggerTornado(centerX){
     d.vy = -T.lift * w * rnd(.85, 1.15);        // вверх — сильно
     d.rotV = rnd(-8, 8);
     // заряжаем как при броске рукой: впечатавшись в землю на скорости — получат урон
-    d.armed = true; d.hitsLeft = sk('collide'); d.noDmg = false; d.grounded = false;
+    d.armed = true; d.noEyeDmg = true; d.hitsLeft = sk('collide'); d.noDmg = false; d.grounded = false;
   }
   for(const c of cyclopes){
     c.freeze = Math.max(c.freeze, CFG.spells.wind.stun);
@@ -929,6 +1071,7 @@ function onUp(){
     }
     held.grounded = false;
     held.armed = true; // заряжен до первого касания земли
+    held.noEyeDmg = false; // запрет от торнадо не переносится на ручной бросок
     held.hitsLeft = sk('collide'); // без «Тарана» столкновения безвредны
     sfx.throw();
     held = null;
@@ -1001,6 +1144,7 @@ function update(dt){
       if(d.returnT <= 0) returnFromOffscreen(d);
       continue;
     }
+    if(!updateDemonBurn(d, dt)) continue;
     if(d.state === 'burrow'){
       // роет под землёй — быстро и неуязвимо; на рубеже выныривает и идёт пешком
       d.x -= TYPES[d.type].burrowSpeed * dt;
@@ -1067,6 +1211,7 @@ function update(dt){
       d.x += (tx - d.x) * Math.min(1, dt*T.follow);
       d.y += (ty - d.y) * Math.min(1, dt*T.follow);
       d.rot = Math.sin(d.t*14) * 0.45;
+      if(overlapsBrazier(d, s)) igniteDemon(d, 'brazier');
 
       // пик скорости замаха: моб отстаёт от курсора и долетает до земли уже после
       // того, как рука остановилась, — поэтому силу удара меряем не в момент касания,
@@ -1145,7 +1290,7 @@ function update(dt){
       if(d.x + s < -M){ cityBreach(d); continue; }
       // улетел далеко ВПРАВО — выброшен прочь: получает урон, выжил → «на возврат», нет → гибнет
       if(d.x > W + M){
-        d.armed = false; d.hitsLeft = 0;
+        d.armed = false; d.noEyeDmg = false; d.hitsLeft = 0;
         hurt(d, CFG.offscreen.dmg, 0);
         if(!demons.includes(d)) continue; // не пережил вылет — погиб
         d.state = 'offscreen';
@@ -1172,7 +1317,7 @@ function update(dt){
           hurt(o, dmgOut, rel);
           if(demons.includes(o)){ // жертва выжила — отлетает (но сама уже не «заряжена»)
             o.state='fly'; o.vx = d.vx*0.7; o.vy = -170;
-            o.rotV = rnd(-4,4); o.grounded = false; o.armed = false; o.hitsLeft = 0;
+            o.rotV = rnd(-4,4); o.grounded = false; o.armed = false; o.noEyeDmg = false; o.hitsLeft = 0;
           }
           hurt(d, dmgBack, rel);
           d.vx *= 0.55; d.vy *= 0.55;
@@ -1188,10 +1333,10 @@ function update(dt){
         const sp3 = Math.hypot(d.vx, d.vy);
         const eyeSp = eyeImpactSpeed(d, sp3);
         const dEye = Math.hypot(d.x+s/2-(c.x+CYC_EYE.x), d.y+s/2-(c.y+CYC_EYE.y));
-        if(d.armed && dEye < CYC_EYE.r + s*0.48 && eyeSp >= SPD_LIGHT){
+        if(d.armed && !d.noEyeDmg && dEye < CYC_EYE.r + s*0.48 && eyeSp >= SPD_LIGHT){
           const dmg = eyeDamageFromDemon(d, eyeSp);
           hitCyclops(c, dmg);
-          d.armed = false; // бросок «разряжен» — второй раз глаз не бьёт
+          d.armed = false; d.noEyeDmg = false; // бросок «разряжен» — второй раз глаз не бьёт
           hurt(d, 1, sp3);
           break;
         }
@@ -1203,10 +1348,11 @@ function update(dt){
         d.y = TOWER_ROOF.y - s;
         const sp = Math.hypot(d.vx, d.vy);
         const wasArmed = d.armed;
-        d.armed = false; // о крышу бросок «разряжается», как об пол
-        const dmg = wasArmed ? impactDamage(sp) : 0;
+        d.armed = false; d.noEyeDmg = false; // о крышу бросок «разряжается», как об пол
+        const dmg = wasArmed ? fireImpactDamage(impactDamage(sp), d, wasArmed, sp) : 0;
         d.rotV *= CFG.throwing.spinFloorDamp;
         if(dmg > 0){
+          fireBurst(d.x + s/2, TOWER_ROOF.y, d);
           hurt(d, dmg, sp);
           if(!demons.includes(d)) continue; // разбился о крышу
         } else sfx.thud();
@@ -1225,9 +1371,10 @@ function update(dt){
         d.x = WALL.x;
         const sp = Math.hypot(d.vx, d.vy);
         const wasArmed = d.armed;
-        d.armed = false; // о стену бросок «разряжается», как об пол
-        const dmg = wasArmed ? impactDamage(sp) : 0;
+        d.armed = false; d.noEyeDmg = false; // о стену бросок «разряжается», как об пол
+        const dmg = wasArmed ? fireImpactDamage(impactDamage(sp), d, wasArmed, sp) : 0;
         if(dmg > 0){
+          fireBurst(WALL.x, d.y + s/2, d);
           hurt(d, dmg, sp);
           if(!demons.includes(d)) continue; // разбился о стену
         } else sfx.thud();
@@ -1247,13 +1394,14 @@ function update(dt){
         const sp = Math.hypot(d.vx, d.vy);
         // урон от пола только при первом касании за бросок; дальше — разряжен
         const wasArmed = d.armed;
-        const dmg = wasArmed ? impactDamage(sp) : 0;
-        d.armed = false;
+        const dmg = wasArmed ? fireImpactDamage(impactDamage(sp), d, wasArmed, sp) : 0;
+        d.armed = false; d.noEyeDmg = false;
         d.rotV *= CFG.throwing.spinFloorDamp; // об пол вращение гасится
         if(wasArmed && sk('shockwave') > 0 && sp >= SPD_LIGHT){
           spawnShockwave(d.x + s/2, GROUND_Y, d);
         }
         if(dmg > 0){
+          fireBurst(d.x + s/2, GROUND_Y, d);
           hurt(d, dmg, sp);
           if(!demons.includes(d)) continue; // разбился
         }
@@ -1321,7 +1469,7 @@ function update(dt){
         hurt(o, B.dmg, Math.max(spd, 400));
         if(demons.includes(o)){ // выжил — отлетает
           o.state='fly'; o.vx = bl.vx*0.6; o.vy = -150;
-          o.armed = false; o.hitsLeft = 0; o.grounded = false;
+          o.armed = false; o.noEyeDmg = false; o.hitsLeft = 0; o.grounded = false;
         }
       }
     }
@@ -1376,6 +1524,7 @@ function update(dt){
   for(const c of [...cyclopes]){
     c.t += dt;
     if(c.eyeFlash > 0) c.eyeFlash -= dt;
+    if(!updateCyclopsBurn(c, dt)) continue;
     if(c.freeze > 0){ c.freeze -= dt; } // замер от порыва ветра
     else if(c.state === 'walk'){
       c.x -= CFG.cyclops.speed * dt;
@@ -1466,6 +1615,7 @@ function draw(){
   } else {
     drawMountain();
   }
+  drawBrazier();
 
   // — флаг: флагшток (жёсткий) + полотно (колышется) — координаты в FLAG вверху файла
   if(art.flagstock){
@@ -1542,6 +1692,7 @@ function draw(){
       cx.globalAlpha = 1;
     }
     cx.restore();
+    if(burning(c)) drawEntityFire(c.x, c.y, CYC_W, CYC_H, 1.4);
     // полоска ХП
     cx.fillStyle = 'rgba(26,22,38,.8)';
     cx.fillRect(c.x, c.y-16, CYC_W, 7);
@@ -1596,6 +1747,7 @@ function draw(){
       cx.globalAlpha = 1;
     }
     cx.restore();
+    if(burning(d)) drawEntityFire(d.x, d.y, s, s, 1);
     // носильщик ещё несёт валун — рисуем его над мобом
     if(d.type==='roller' && d.hasBoulder){
       const br = CFG.spells.boulder.r;
@@ -1946,6 +2098,65 @@ function drawMountain(){
   cx.fill();
   cx.fillStyle='rgba(0,0,0,.15)';
   cx.fillRect(-20,140, 40, GROUND_Y-130);
+}
+
+function drawBrazier(){
+  const t = last * 0.001;
+  const x = BRAZIER.x, y = BRAZIER.y;
+  cx.save();
+  cx.globalAlpha = 0.3;
+  cx.fillStyle = '#000';
+  cx.beginPath();
+  cx.ellipse(x, TOWER_ROOF.y + 3, BRAZIER.w*0.55, 5, 0, 0, Math.PI*2);
+  cx.fill();
+  cx.globalAlpha = 1;
+  // чаша: тёмный пиксельный силуэт с тёплой кромкой
+  cx.fillStyle = '#201824';
+  cx.fillRect(Math.round(x - BRAZIER.w/2), Math.round(y + 7), BRAZIER.w, BRAZIER.h);
+  cx.fillStyle = '#4a2a26';
+  cx.fillRect(Math.round(x - BRAZIER.w/2 + 3), Math.round(y + 7), BRAZIER.w - 6, 3);
+  cx.fillStyle = '#8a4a24';
+  cx.fillRect(Math.round(x - BRAZIER.w/2 + 6), Math.round(y + 4), BRAZIER.w - 12, 5);
+  cx.globalCompositeOperation = 'lighter';
+  for(let i = 0; i < 3; i++){
+    const phase = t*7 + i*2.1;
+    const fx = x + (i-1)*7 + Math.sin(phase)*2;
+    const h = 18 + Math.sin(phase*1.3)*5;
+    cx.fillStyle = FIRE.colors[i % FIRE.colors.length];
+    cx.beginPath();
+    cx.moveTo(fx, y + 6 - h);
+    cx.lineTo(fx - 7, y + 7);
+    cx.lineTo(fx + 7, y + 7);
+    cx.closePath();
+    cx.fill();
+  }
+  cx.globalCompositeOperation = 'source-over';
+  cx.restore();
+}
+
+function drawEntityFire(x, y, w, h, scale){
+  const t = last * 0.001;
+  cx.save();
+  cx.globalCompositeOperation = 'lighter';
+  const n = Math.max(2, Math.round(3 * scale));
+  for(let i = 0; i < n; i++){
+    const phase = t*9 + i*1.7 + x*0.03;
+    const fx = x + w*(0.25 + 0.5*((i+0.5)/n)) + Math.sin(phase)*w*0.08;
+    const fy = y + h*(0.18 + 0.25*Math.abs(Math.sin(phase*.7)));
+    const fh = (10 + 7*Math.sin(phase*1.2 + 1)) * scale;
+    const fw = (5 + 2*Math.cos(phase)) * scale;
+    cx.fillStyle = FIRE.colors[i % FIRE.colors.length];
+    cx.globalAlpha = 0.55 + 0.25*Math.sin(phase);
+    cx.beginPath();
+    cx.moveTo(fx, fy - fh);
+    cx.lineTo(fx - fw, fy);
+    cx.lineTo(fx + fw, fy);
+    cx.closePath();
+    cx.fill();
+  }
+  cx.globalAlpha = 1;
+  cx.globalCompositeOperation = 'source-over';
+  cx.restore();
 }
 
 // ── HUD / overlay ──────────────────────────────────────────────────
