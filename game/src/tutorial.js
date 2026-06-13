@@ -1,0 +1,182 @@
+import { CFG } from './config.js';
+import { SPRITES } from './sprites.js';
+
+// ────────────────────────────────────────────────────────────────────
+// Обучающая сцена — отключаемый модуль (см. CFG.tutorial).
+//
+// Когда выходит первый моб, мир замирает, экран затемняется, моб подсвечивается
+// поверх маски, к нему ведёт белая стрелка с подсказкой. Гаснет, как только игрок
+// схватит моба.
+//
+// Это UI/логика обучения — отдельно от dialogue.js (там нарративные реплики ворона).
+// Игровой код (game.js):
+//   1) один раз отдаёт контекст отрисовки — initTutorial({cx,W,H,FONT,sizeOf})
+//   2) в start() зовёт resetTutorial()
+//   3) в цикле замораживает мир, пока tutorialActive()
+//   4) при появлении первого моба зовёт tutorialOnFirstDemon(demons)
+//   5) при захвате подсвеченного моба зовёт tutorialComplete()
+//   6) в draw() рисует поверх всего: drawTutorial(demons, last)
+// Сам захват моба (правка held и т.п.) остаётся в game.js — это игровая логика.
+// ────────────────────────────────────────────────────────────────────
+
+let cx, W, H, FONT, sizeOf; // контекст отрисовки, приходит из game.js
+let active = false;   // мир заморожен, показываем затемнение и подсказку (первый моб)
+let pending = false;  // обучение ещё не запускалось в этой партии
+let demon = null;     // моб, которого подсвечиваем и на которого указываем
+let textEl = null;    // HTML-подсказка поверх холста (см. ниже, почему не на холсте)
+
+// модальное предупреждение (затемнение + текст по центру, закрывается кликом).
+// Сейчас используется один раз — когда игрок впервые «доставил» моба в город.
+let msgActive = false;     // показываем сообщение, мир заморожен
+let cityPending = false;   // предупреждение про город ещё не показывали в этой партии
+let msgEl = null;          // HTML-элемент сообщения
+
+export function initTutorial(env){
+  ({ cx, W, H, FONT, sizeOf } = env);
+  buildTextEl(); buildMsgEl();
+}
+
+// Текст подсказки — отдельный HTML-элемент поверх холста, а НЕ на самом холсте.
+// Холст 960×540 растягивается на окно дробным множителем (см. screen.js), и любой
+// текст, нарисованный на нём, мылится как растровая картинка. HTML же — векторный
+// шрифт, его браузер масштабирует резко при любом множителе (как HUD). Позиционируем
+// в дизайн-координатах внутри #wrap — он масштабируется целиком вместе с холстом.
+function buildTextEl(){
+  if(textEl) return;
+  const wrap = document.getElementById('wrap');
+  if(!wrap) return;
+  textEl = document.createElement('div');
+  textEl.style.cssText =
+    'position:absolute; left:0; right:0; top:'+Math.round(H*0.3)+'px;'+
+    'text-align:center; pointer-events:none; z-index:5; display:none;'+
+    'font-family:'+FONT+'; color:#fff7d2; line-height:1.6;'+
+    'text-shadow:2px 2px 0 #0a0812;';
+  const main = document.createElement('div');
+  main.style.fontSize = '16px';
+  main.textContent = CFG.tutorial.text;
+  textEl.appendChild(main);
+  if(CFG.tutorial.text2){
+    const sub = document.createElement('div');
+    sub.style.cssText = 'font-size:10px; color:#cfd2e6; margin-top:10px;';
+    sub.textContent = CFG.tutorial.text2;
+    textEl.appendChild(sub);
+  }
+  wrap.appendChild(textEl);
+}
+function showText(on){ if(textEl) textEl.style.display = on ? 'block' : 'none'; }
+
+// Модальное сообщение по центру: заголовок + пояснение, переносится по строкам.
+// Тоже HTML (тот же резон, что и подсказка). Текст из CFG.tutorial.cityTitle/citySub.
+function buildMsgEl(){
+  if(msgEl) return;
+  const wrap = document.getElementById('wrap');
+  if(!wrap) return;
+  msgEl = document.createElement('div');
+  msgEl.style.cssText =
+    'position:absolute; left:50%; top:40%; transform:translate(-50%,-50%);'+
+    'width:680px; max-width:90%; text-align:center; pointer-events:none; z-index:5; display:none;'+
+    'font-family:'+FONT+'; line-height:1.7; text-shadow:2px 2px 0 #0a0812;';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:13px; color:#ffe14d;';
+  title.textContent = CFG.tutorial.cityTitle;
+  msgEl.appendChild(title);
+  if(CFG.tutorial.citySub){
+    const sub = document.createElement('div');
+    sub.style.cssText = 'font-size:9px; color:#cfd2e6; line-height:1.9; margin-top:18px;';
+    sub.textContent = CFG.tutorial.citySub;
+    msgEl.appendChild(sub);
+  }
+  wrap.appendChild(msgEl);
+}
+function showMsg(on){ if(msgEl) msgEl.style.display = on ? 'block' : 'none'; }
+
+// сброс под новую партию (в start())
+export function resetTutorial(){
+  pending = CFG.tutorial.enabled; active = false; demon = null; showText(false);
+  cityPending = CFG.tutorial.enabled; msgActive = false; showMsg(false);
+}
+
+export const tutorialActive = () => active;
+// мир заморожен (подсказка про первого моба ИЛИ модальное сообщение)
+export const tutorialFrozen   = () => active || msgActive;
+export const tutorialMsgActive = () => msgActive;
+
+// первый «заброс» моба в город — показать предупреждение и заморозить мир.
+// true = показали (первый раз); false = уже показывали (мир не морозим).
+export function tutorialCityBreach(){
+  if(!cityPending) return false;
+  cityPending = false; msgActive = true; showMsg(true);
+  return true;
+}
+// закрыть модальное сообщение (по клику) — мир оживает
+export function dismissTutorialMessage(){
+  if(!msgActive) return;
+  msgActive = false; showMsg(false);
+}
+export const tutorialDemon  = () => demon;
+
+// первый моб вышел — заморозить мир и взять его целью. true = обучение началось
+export function tutorialOnFirstDemon(demons){
+  if(!pending || !demons.length) return false;
+  active = true; pending = false; demon = demons[0]; showText(true);
+  return true;
+}
+
+// обучение пройдено (игрок схватил подсвеченного моба)
+export function tutorialComplete(){ active = false; showText(false); }
+
+// тёмная маска под модальное сообщение (сам текст — HTML-элемент msgEl)
+export function drawTutorialMask(){
+  cx.fillStyle = 'rgba(8,6,16,0.74)';
+  cx.fillRect(0, 0, W, H);
+}
+
+// Тёмная маска на весь экран; поверх неё заново рисуем моба (так он подсвечен),
+// к нему ведёт покачивающаяся белая стрелка, ниже — подсказка из CFG.tutorial.
+export function drawTutorial(demons, last){
+  // тёмная маска
+  cx.fillStyle = 'rgba(8,6,16,0.74)';
+  cx.fillRect(0, 0, W, H);
+
+  const d = demon;
+  if(!d || !demons.includes(d)) return;
+  const s = sizeOf(d);
+  const mx = d.x + s/2, my = d.y + s/2;
+
+  // мягкое свечение под мобом
+  const glow = cx.createRadialGradient(mx, my, s*0.3, mx, my, s*1.7);
+  glow.addColorStop(0, 'rgba(255,247,210,0.22)');
+  glow.addColorStop(1, 'rgba(255,247,210,0)');
+  cx.fillStyle = glow;
+  cx.beginPath(); cx.arc(mx, my, s*1.7, 0, Math.PI*2); cx.fill();
+
+  // моб поверх маски
+  cx.save();
+  cx.translate(mx, my);
+  if(d.flip) cx.scale(-1, 1);
+  cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s);
+  cx.restore();
+
+  // белая стрелка из верхне-левого угла к мобу (диагональ 45° вниз-вправо),
+  // покачивается по своей оси — «тычет» в моба
+  const ang = Math.PI/4;
+  const bob = (Math.sin(last*0.006)+1) * 7;             // 0..14 вдоль оси стрелки
+  const gap = s*0.75 + 14 + bob;                        // остриё не доходит до моба
+  const tipX = mx - Math.cos(ang)*gap,  tipY = my - Math.sin(ang)*gap;
+  const tailX = mx - Math.cos(ang)*(gap+72), tailY = my - Math.sin(ang)*(gap+72);
+  strokeArrow(tailX, tailY, tipX, tipY, 5);
+  // текст-подсказка — это HTML-элемент textEl поверх холста (см. buildTextEl)
+}
+
+// белая стрелка (линия + треугольный наконечник) из (x1,y1) в (x2,y2)
+function strokeArrow(x1, y1, x2, y2, w){
+  const ang = Math.atan2(y2-y1, x2-x1), head = 16;
+  cx.strokeStyle = '#fff'; cx.fillStyle = '#fff';
+  cx.lineWidth = w; cx.lineCap = 'round';
+  cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke();
+  cx.beginPath();
+  cx.moveTo(x2, y2);
+  cx.lineTo(x2 - head*Math.cos(ang - Math.PI/6), y2 - head*Math.sin(ang - Math.PI/6));
+  cx.lineTo(x2 - head*Math.cos(ang + Math.PI/6), y2 - head*Math.sin(ang + Math.PI/6));
+  cx.closePath(); cx.fill();
+}

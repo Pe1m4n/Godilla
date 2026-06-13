@@ -41,6 +41,20 @@ export function loadImage(src){
   });
 }
 
+// Перекрашивает белый силуэт (форма в альфе) в сплошной цвет col.
+// Берёт исходную картинку, оставляет её форму, но заливает целиком цветом.
+// Тени внутри спрайта при этом сплющиваются — спрайт должен быть белым силуэтом.
+export function tint(img, col){
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0);
+  g.globalCompositeOperation = 'source-in';
+  g.fillStyle = col;
+  g.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+
 export const SPRITES = {
   small:  PALS_SMALL.map(p => bake(DEMON_MAP, p)),
   big:    PALS_BIG.map(p => bake(DEMON_MAP, p)),

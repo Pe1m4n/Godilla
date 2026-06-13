@@ -2,11 +2,21 @@ import {
   // SPD_MED/SPD_HARD не импортируем: наша боёвка (combat rework) даёт ровный урон,
   // пороги по скорости из dev не используются. SPELL_NAMES нужен законсервированной панели.
   CFG, GRAV, TYPES, SPD_LIGHT,
-  PALS, CYC_PAL, CYC_PX, CYC_W, CYC_H, CYC_EYE, SPELL_NAMES,
+  CYC_PAL, CYC_PX, CYC_W, CYC_H, CYC_EYE, SPELL_NAMES,
 } from './config.js';
-import { SPRITES, CYC_SPRITE, SPELL_SPRITES, HORN_SPRITE } from './sprites.js';
+import { SPRITES, CYC_SPRITE, SPELL_SPRITES, HORN_SPRITE, tint } from './sprites.js';
 import { sfx, toggleMute } from './audio.js';
 import { art, cursorFrames } from './assets.js';
+import {
+  initTutorial, resetTutorial, tutorialActive, tutorialDemon,
+  tutorialOnFirstDemon, tutorialComplete, drawTutorial,
+  tutorialFrozen, tutorialMsgActive, tutorialCityBreach,
+  dismissTutorialMessage, drawTutorialMask,
+} from './tutorial.js';
+import { initUIText, floatText, label, hideLabel } from './uitext.js';
+import {
+  initDialogue, startDialogue, dialogueActive, dialogueClick, updateDialogue, drawDialogue,
+} from './dialogue-ui.js';
 
 const cv = document.getElementById('game');
 const cx = cv.getContext('2d');
@@ -37,6 +47,13 @@ const SLOT_Y = H - SLOT - 18;
 // размер моба в пикселях экрана
 const sizeOf = d => 9 * TYPES[d.type].px;
 
+// обучающий модуль: отдаём ему контекст отрисовки (см. tutorial.js)
+initTutorial({ cx, W, H, FONT, sizeOf });
+// слой HTML-текста поверх холста (всплывашки, подписи) — см. uitext.js
+initUIText();
+// окно диалога: тот же контекст отрисовки (см. dialogue-ui.js)
+initDialogue({ cx, W, H, FONT });
+
 // ── облака: плывут на фоне (x,y в дизайн-координатах, spd — px/сек, минус = влево) ──
 // charge: null | 'storm' — заряженную грозовую тучу можно кликнуть (см. triggerCloud)
 const clouds = [
@@ -64,8 +81,7 @@ function updateClouds(dt){
       if(idle.length){
         const c = idle[(Math.random()*idle.length)|0];
         c.charge = 'storm';
-        floaties.push({ x: c.x + cloudW(c)/2, y: c.y + cloudH(c)/2,
-          txt: 'ГРОЗА — КЛИКНИ!', life: 1.8, col: '#2a3a7a' });
+        floatText(c.x + cloudW(c)/2, c.y + cloudH(c)/2, 'ГРОЗА — КЛИКНИ!', '#2a3a7a', 1.8);
       }
       nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
     }
@@ -127,8 +143,23 @@ const GRAIN = {
   grainEl.style.opacity = GRAIN.opacity;
 }
 
+// ── кровь ──────────────────────────────────────────────────────────
+// Цвет крови по типу моба (по умолчанию — из CFG.blood).
+function bloodCol(type){ return CFG.blood.byType[type] || CFG.blood.defaultCol; }
+// Какой спрайт лужи: мелкие мобы (px<=2.5) — mini, остальные — medium.
+function bloodSize(type){ return (TYPES[type]?.px ?? 4) <= 2.5 ? 'mini' : 'medium'; }
+// Перекрашенные спрайты крови кэшируются по «размер|цвет» — красим один раз.
+const bloodCache = {};
+function bloodSprite(size, col){
+  const key = size + '|' + col;
+  if (bloodCache[key]) return bloodCache[key];
+  const img = size === 'mini' ? art.bloodMini : art.bloodMedium;
+  if (!img) return null;                 // ещё не догрузилось — будет запасной эллипс
+  return (bloodCache[key] = tint(img, col));
+}
+
 // ── состояние ──────────────────────────────────────────────────────
-let demons = [], puddles = [], particles = [], floaties = [], cyclopes = [], shockwaves = [];
+let demons = [], puddles = [], particles = [], cyclopes = [], shockwaves = [];
 let bolts = [], boulders = [], windStreaks = [];
 let heldBoulder = null; // отобранный у носильщика валун в руке: {x, y}
 // данные законсервированной панели заклинаний (см. drawSpellUI — сейчас не вызывается)
@@ -227,12 +258,12 @@ function hurt(d, dmg, sp){
   d.flash = 0.25;
   shake = Math.min(TYPES[d.type].shakeHurt, 3 + sp/200);
   const s = sizeOf(d), px = d.x + s/2, py = d.y + s*0.8;
-  const col = PALS[d.type][d.pal].b;
+  const col = bloodCol(d.type);
   for(let i=0;i<5+dmg*3;i++){
     particles.push({x:px, y:py, vx:rnd(-180,180), vy:rnd(-300,-60),
       col, life:rnd(.3,.6), size:rnd(2,4)});
   }
-  floaties.push({x:px, y:d.y-8, txt:'-'+dmg+' ХП', life:1, col:'#c0392b'});
+  floatText(px, d.y-8, '-'+dmg+' ХП', '#c0392b', 1);
 }
 
 function splat(d, sp){
@@ -242,11 +273,11 @@ function splat(d, sp){
   score += pts; scoreEl.textContent = score;
   gainXP(pts);
   const s = sizeOf(d), px = d.x + s/2, py = d.y + s/2;
-  const col = PALS[d.type][d.pal].b;
+  const col = bloodCol(d.type);
   const big = d.type !== 'small';
   // размер лужи фиксирован по типу моба — от силы броска не зависит
   const maxR = d.type==='huge' ? rnd(34,46) : big ? rnd(26,38) : rnd(13,20);
-  puddles.push({x:px, y:GROUND_Y, r:0, max:maxR, col, life:1});
+  puddles.push({x:px, y:GROUND_Y, r:0, max:maxR, col, life:1, size:bloodSize(d.type)});
   for(let i=0; i < (d.type==='huge' ? 30 : big ? 22 : 12); i++){
     particles.push({
       x:px, y:py,
@@ -254,8 +285,8 @@ function splat(d, sp){
       col, life:rnd(.4,.9), size:rnd(2, big?6:4)
     });
   }
-  floaties.push({x:px, y:py-24, txt: big?'ХРЯЯЯСЬ!':'хрясь!', life:1});
-  if (big) floaties.push({x:px, y:py-44, txt:'+'+pts, life:1.2, col:'#b8860b'});
+  floatText(px, py-24, big?'ХРЯЯЯСЬ!':'хрясь!');
+  if (big) floatText(px, py-44, '+'+pts, '#b8860b', 1.2);
   if (held === d) { held = null; cv.classList.remove('grabbing'); }
   demons.splice(demons.indexOf(d),1);
   if (d.type === 'bomber') bomberBoom(px, py); // рвануло — задевает соседей
@@ -284,7 +315,7 @@ function reachMountain(d){
   hp = Math.max(0, hp - dmgM);
   hpFill.style.width = hp + '%';
   shake = 10;
-  floaties.push({x:d.x+sizeOf(d)/2, y:d.y, txt:'-'+dmgM, life:1, col:'#c0392b'});
+  floatText(d.x+sizeOf(d)/2, d.y, '-'+dmgM, '#c0392b', 1);
   for(let i=0;i<8;i++){
     particles.push({x:d.x, y:d.y+sizeOf(d)/2, vx:rnd(-80,180), vy:rnd(-200,-40),
       col:'#7a4a32', life:rnd(.3,.7), size:rnd(2,4)});
@@ -293,13 +324,27 @@ function reachMountain(d){
   if (hp <= 0) gameOver();
 }
 
+// Моб улетел за ЛЕВЫЙ край — «доставлен» в город за вратами.
+// Врата получают ДВОЙНОЙ урон, который этот моб нанёс бы им у стены.
+function cityBreach(d){
+  sfx.reach();
+  const dmg = 2 * mountainDmg(TYPES[d.type].mtnDmg);
+  hp = Math.max(0, hp - dmg);
+  hpFill.style.width = hp + '%';
+  shake = 12;
+  floatText(MOUNTAIN_X + 30, 130, '-'+dmg, '#c0392b', 1.4);
+  demons.splice(demons.indexOf(d),1);
+  if(hp <= 0){ gameOver(); return; }
+  tutorialCityBreach(); // первый раз за партию — обучающее предупреждение (затемнение + текст)
+}
+
 function spawnCyclops(){
   cyclopes.push({
     x: W + 10, y: GROUND_Y - CYC_H,
     hp: CFG.cyclops.hp, t: rnd(0,10), step: 0.8,
     state: 'walk', poundT: 0, eyeFlash: 0, freeze: 0,
   });
-  floaties.push({x: W-90, y: GROUND_Y - CYC_H - 24, txt:'ЦИКЛОП!', life:1.6, col:'#c0392b'});
+  floatText(W-90, GROUND_Y - CYC_H - 24, 'ЦИКЛОП!', '#c0392b', 1.6);
 }
 
 function hitCyclops(c, dmg){
@@ -307,19 +352,20 @@ function hitCyclops(c, dmg){
   c.eyeFlash = 0.35;
   sfx.hurt();
   shake = Math.max(shake, CFG.cyclops.shakeHit);
-  floaties.push({x:c.x+CYC_EYE.x, y:c.y+CYC_EYE.y-16, txt:'-'+dmg+' ХП', life:1, col:'#c0392b'});
+  floatText(c.x+CYC_EYE.x, c.y+CYC_EYE.y-16, '-'+dmg+' ХП', '#c0392b', 1);
   if(c.hp <= 0){
     sfx.splat(); shake = CFG.cyclops.shakeDeath;
     score += CFG.cyclops.score; scoreEl.textContent = score;
     gainXP(CFG.cyclops.score);
     const px = c.x + CYC_W/2;
-    puddles.push({x:px, y:GROUND_Y, r:0, max:rnd(55,70), col:CYC_PAL.b, life:1.4});
+    const cbCol = bloodCol('cyclops');
+    puddles.push({x:px, y:GROUND_Y, r:0, max:rnd(55,70), col:cbCol, life:1.4, size:'medium'});
     for(let i=0;i<40;i++){
       particles.push({x:px+rnd(-CYC_W/3,CYC_W/3), y:c.y+rnd(0,CYC_H), vx:rnd(-320,320), vy:rnd(-500,-60),
-        col:CYC_PAL.b, life:rnd(.5,1.1), size:rnd(3,7)});
+        col:cbCol, life:rnd(.5,1.1), size:rnd(3,7)});
     }
-    floaties.push({x:px, y:c.y, txt:'ХРЯЯЯСЬ!!!', life:1.4});
-    floaties.push({x:px, y:c.y+26, txt:'+'+CFG.cyclops.score, life:1.5, col:'#b8860b'});
+    floatText(px, c.y, 'ХРЯЯЯСЬ!!!', '#1a1626', 1.4);
+    floatText(px, c.y+26, '+'+CFG.cyclops.score, '#b8860b', 1.5);
     cyclopes.splice(cyclopes.indexOf(c),1);
   }
 }
@@ -393,7 +439,7 @@ function openSkillChoice(){
     // всё прокачано — вместо скилла чиним врата
     pendingLevels--;
     hp = Math.min(100, hp + 15); hpFill.style.width = hp + '%';
-    floaties.push({x: MOUNTAIN_X, y: 200, txt: '+15 ВРАТАМ', life: 1.4, col: '#2f6e3c'});
+    floatText(MOUNTAIN_X, 200, '+15 ВРАТАМ', '#2f6e3c', 1.4);
     if(pendingLevels > 0) openSkillChoice();
     return;
   }
@@ -456,7 +502,7 @@ function blowHorn(){
   }
   for(const c of cyclopes){
     c.freeze = Math.max(c.freeze, CFG.spells.wind.stun);
-    floaties.push({x:c.x+CYC_W/2, y:c.y-24, txt:'ЗАМЕР!', life:1, col:'#1a1626'});
+    floatText(c.x+CYC_W/2, c.y-24, 'ЗАМЕР!', '#1a1626', 1);
   }
 }
 
@@ -603,9 +649,40 @@ function ptr(e){
 }
 function onDown(e){
   if(!running || choosing) return;
+  // идёт диалог: клик допечатывает реплику / листает дальше, в игру не проходит
+  if(dialogueActive()){
+    dialogueClick();
+    e.preventDefault();
+    return;
+  }
+  // открыто модальное предупреждение (заброс в город) — клик закрывает его
+  if(tutorialMsgActive()){
+    dismissTutorialMessage();
+    e.preventDefault();
+    return;
+  }
   const p = ptr(e);
   mouse.x = mouse.px = p.x; mouse.y = mouse.py = p.y;
   mouse.vx = mouse.vy = 0;
+  // обучение: можно только схватить выделенного моба — это и завершает обучение
+  if(tutorialActive()){
+    const d = tutorialDemon();
+    if(d && demons.includes(d) && d.state === 'walk'){
+      const s = sizeOf(d);
+      const dist = Math.hypot(p.x-(d.x+s/2), p.y-(d.y+s/2));
+      // радиус захвата щедрый, чтобы новичок легко попал по подсвеченному мобу
+      const gr = Math.max(TYPES[d.type].grabR, s) * 1.4;
+      if(dist < gr){
+        held = d; d.state='held'; d.rotV = 0;
+        d.grounded = false; d.noDmg = false; d.swing = 0; d.walled = false;
+        cv.classList.add('grabbing');
+        sfx.grab();
+        tutorialComplete(); // обучение пройдено — мир оживает
+      }
+    }
+    e.preventDefault();
+    return;
+  }
   // 0) клик по готовому Рогу — порыв ветра, подбрасывающий орду
   if(hornCd <= 0 && Math.hypot(p.x - HORN.x, p.y - HORN.y) <= HORN.r){
     blowHorn();
@@ -631,7 +708,7 @@ function onDown(e){
       d.hasBoulder = false;
       cv.classList.add('grabbing');
       sfx.grab();
-      floaties.push({x:d.x+s/2, y:d.y-10, txt:'ВАЛУН!', life:1, col:'#7e828c'});
+      floatText(d.x+s/2, d.y-10, 'ВАЛУН!', '#7e828c', 1);
       e.preventDefault();
       return;
     }
@@ -665,7 +742,7 @@ function onDown(e){
       }
     }
     if(hit){
-      floaties.push({x:p.x, y:p.y-12, txt:'НЕ ПОДНЯТЬ!', life:1, col:'#1a1626'});
+      floatText(p.x, p.y-12, 'НЕ ПОДНЯТЬ!', '#1a1626', 1);
       sfx.thud();
     }
   }
@@ -727,7 +804,10 @@ function loop(ts){
   last = ts;
   updateClouds(dt); // плывут всегда, даже в меню и на паузе
   updateCursor(dt); // курсор анимируется всегда, чтобы успеть «сжаться» при хватании
-  if(running && !choosing) update(dt);
+  updateDialogue(dt); // печать реплики во времени (если идёт диалог)
+  // диалог и обучение замораживают мир (диалог играется первым, до обучения)
+  if(running && !choosing && !tutorialFrozen() && !dialogueActive()) update(dt);
+  else shake = 0; // мир на паузе/стопе — всегда гасим тряску камеры (см. CLAUDE.md)
   draw();
   requestAnimationFrame(loop);
 }
@@ -763,6 +843,9 @@ function update(dt){
       startWave(waveIdx + 1);
     }
   }
+
+  // первый моб вышел — запускаем обучение и замораживаем мир до его захвата
+  if(tutorialOnFirstDemon(demons)) return;
 
   for(const d of [...demons]){
     if(!demons.includes(d)) continue;
@@ -848,9 +931,11 @@ function update(dt){
       d.x += d.vx * dt;
       d.y += d.vy * dt;
       d.rot += d.rotV * dt * 4;
-      // улетел далеко вбок за экран — получает урон; выжил → уходит «на возврат», нет → гибнет
       const M = CFG.offscreen.margin;
-      if(d.x > W + M || d.x + s < -M){
+      // улетел ВЛЕВО за врата — «доставлен» в город: врата получают двойной урон, моб пропал
+      if(d.x + s < -M){ cityBreach(d); continue; }
+      // улетел далеко ВПРАВО — выброшен прочь: получает урон, выжил → «на возврат», нет → гибнет
+      if(d.x > W + M){
         d.armed = false; d.hitsLeft = 0;
         hurt(d, CFG.offscreen.dmg, 0);
         if(!demons.includes(d)) continue; // не пережил вылет — погиб
@@ -1066,7 +1151,7 @@ function update(dt){
         hp = Math.max(0, hp - pd);
         hpFill.style.width = hp + '%';
         shake = CFG.cyclops.shakePound; sfx.reach();
-        floaties.push({x:MOUNTAIN_X+40, y:GROUND_Y-170, txt:'-'+pd, life:1.2, col:'#c0392b'});
+        floatText(MOUNTAIN_X+40, GROUND_Y-170, '-'+pd, '#c0392b', 1.2);
         for(let i=0;i<14;i++){
           particles.push({x:MOUNTAIN_X+rnd(-30,60), y:rnd(180,GROUND_Y-40), vx:rnd(-60,220), vy:rnd(-220,-40),
             col:'#7a4a32', life:rnd(.4,.9), size:rnd(2,5)});
@@ -1091,10 +1176,7 @@ function update(dt){
     pl.life -= dt*0.012;
     if(pl.life<=0) puddles.splice(puddles.indexOf(pl),1);
   }
-  for(const f of [...floaties]){
-    f.y -= 40*dt; f.life -= dt*1.2;
-    if(f.life<=0) floaties.splice(floaties.indexOf(f),1);
-  }
+  // всплывашки (урон/очки) теперь HTML-элементы — анимируются сами, см. uitext.js
   if(shake>0) shake = Math.max(0, shake - dt*40);
 }
 
@@ -1160,14 +1242,23 @@ function draw(){
   // лужи и взрывные волны — лежат на земле
   for(const pl of puddles){
     cx.globalAlpha = Math.min(1, pl.life)*0.9;
-    cx.fillStyle = pl.col;
-    cx.beginPath();
-    cx.ellipse(pl.x, pl.y+3, pl.r, pl.r*0.32, 0, 0, Math.PI*2);
-    cx.fill();
-    cx.globalAlpha = Math.min(1, pl.life)*0.5;
-    cx.beginPath();
-    cx.ellipse(pl.x+pl.r*.5, pl.y+2, pl.r*.35, pl.r*.12, 0, 0, Math.PI*2);
-    cx.fill();
+    const spr = bloodSprite(pl.size || 'medium', pl.col);
+    if (spr){
+      // спрайт-лужа растекается по полу: ширина растёт с pl.r, низ на линии земли
+      const w = pl.r * 2;
+      const h = w * (spr.height / spr.width);
+      cx.drawImage(spr, pl.x - w/2, pl.y + 3 - h/2, w, h);
+    } else {
+      // запасной вариант, пока спрайт крови не догрузился
+      cx.fillStyle = pl.col;
+      cx.beginPath();
+      cx.ellipse(pl.x, pl.y+3, pl.r, pl.r*0.32, 0, 0, Math.PI*2);
+      cx.fill();
+      cx.globalAlpha = Math.min(1, pl.life)*0.5;
+      cx.beginPath();
+      cx.ellipse(pl.x+pl.r*.5, pl.y+2, pl.r*.35, pl.r*.12, 0, 0, Math.PI*2);
+      cx.fill();
+    }
     cx.globalAlpha = 1;
   }
   for(const wv of shockwaves){
@@ -1317,19 +1408,7 @@ function draw(){
     cx.globalAlpha = 1;
   }
 
-  // координаты округляем: текст на дробных позициях сглаживается по краям,
-  // и после растягивания холста края выглядят грязно
-  cx.font = '16px '+FONT; cx.textAlign='center';
-  for(const f of floaties){
-    // почти весь срок текст полностью непрозрачный, гаснет только в конце
-    // (раньше alpha = life, и надпись бледнела с первого же кадра;
-    // к тому же life > 1 канвас игнорирует — alpha оставалась от прошлой отрисовки)
-    cx.globalAlpha = Math.max(0, Math.min(1, f.life*3));
-    cx.fillStyle = f.col || '#1a1626';
-    cx.fillText(f.txt, Math.round(f.x), Math.round(f.y));
-    cx.globalAlpha = 1;
-  }
-  cx.textAlign='left';
+  // всплывашки (урон/очки) рисуются HTML-слоем поверх холста — см. uitext.js
 
   cx.restore();
 
@@ -1345,6 +1424,14 @@ function draw(){
     cx.drawImage(SPELL_SPRITES.boulder, -br, -br, br*2, br*2);
     cx.restore();
   }
+
+  // обучающая сцена: затемнение + подсвеченный моб + стрелка + подсказка (поверх всего)
+  if(tutorialActive()) drawTutorial(demons, last);
+  // модальное предупреждение (заброс в город): только затемнение, текст — HTML
+  else if(tutorialMsgActive()) drawTutorialMask();
+
+  // окно диалога: подложка + печатающийся текст + треугольник (поверх сцены, без затемнения)
+  if(dialogueActive()) drawDialogue(last);
 
   // курсор-рука вместо системного курсора (он скрыт в CSS) — поверх всего
   if(running) drawCursor();
@@ -1377,6 +1464,8 @@ function cursorOverInteractive(){
 // Зовётся каждый кадр из loop(). Захват (held/heldBoulder) — главный приоритет и
 // единственное состояние с анимацией; указатель и айдл переключаются мгновенно.
 function updateCursor(dt){
+  // во время обучения рука нейтральная (рог под маской не должен включать «указатель»)
+  if(tutorialFrozen()){ cursorState.phase = 'idle'; cursorState.i = 0; cursorState.t = 0; return; }
   const grabbing = !!(held || heldBoulder);
   if(grabbing){
     if(cursorState.phase !== 'close' && cursorState.phase !== 'held'){
@@ -1438,17 +1527,17 @@ function drawHorn(){
   const bob = ready ? Math.sin(t*4)*1.5 : 0;
   cx.drawImage(HORN_SPRITE, -hw/2, -hh/2 + bob, hw, hh);
   cx.globalAlpha = 1;
-  if(ready){
-    cx.fillStyle = '#ffe14d'; cx.font = 'bold 10px monospace';
-    cx.fillText('ТРУБИ!', 0, HORN.r + 12);
-  } else {
-    // дуга перезарядки по кругу + секунды
+  if(!ready){
+    // дуга перезарядки по кругу (подпись с секундами — HTML, см. ниже)
     const frac = 1 - hornCd / CFG.horn.cd;
     cx.strokeStyle = '#ffe14d'; cx.lineWidth = 3;
     cx.beginPath(); cx.arc(0, 0, HORN.r - 2, -Math.PI/2, -Math.PI/2 + frac*Math.PI*2); cx.stroke();
-    cx.fillStyle = '#fffdf5'; cx.font = 'bold 12px monospace';
-    cx.fillText(Math.ceil(hornCd), 0, HORN.r + 13);
   }
+  // подпись рога — HTML-слой поверх холста (на холсте текст мылится при растягивании).
+  // Во время заморозки (обучение/сообщение) прячем: иначе светилась бы поверх маски.
+  if(tutorialFrozen())   hideLabel('horn');
+  else if(ready)         label('horn', HORN.x, HORN.y + HORN.r + 12, 'ТРУБИ!', '#ffe14d', 10);
+  else                   label('horn', HORN.x, HORN.y + HORN.r + 13, Math.ceil(hornCd), '#fffdf5', 12);
   cx.restore();
   cx.textAlign = 'left'; cx.textBaseline = 'alphabetic';
 }
@@ -1665,25 +1754,30 @@ muteBtn.addEventListener('click', () => {
 });
 
 function start(){
-  demons=[]; puddles=[]; particles=[]; floaties=[]; cyclopes=[]; shockwaves=[];
+  demons=[]; puddles=[]; particles=[]; cyclopes=[]; shockwaves=[];
   bolts=[]; boulders=[]; windStreaks=[]; heldBoulder=null; skyFlash=0; hornCd=0;
   for(const c of clouds){ c.charge = null; c.chargeT = 0; }
   nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
   score=0; hp=100; held=null; betweenTimer=0;
   player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
   pendingLevels = 0; choosing = false;
+  resetTutorial();
   scoreEl.textContent='0'; hpFill.style.width='100%';
   updateXPBar();
   startWave(0);
   overlay.classList.add('hidden');
   lvlOverlay.classList.add('hidden');
   running = true;
+  // вступительный диалог: пока он идёт, мир заморожен (см. цикл). Кончится —
+  // выйдет первый моб и подхватит обучение. Тумблер — DIALOGUE_CFG.enabled.
+  startDialogue('intro');
 }
 function gameOver(){
   running = false; held = null; heldBoulder = null;
   choosing = false; pendingLevels = 0;
   shake = 0; // игра остановилась — гасим тряску, иначе экран дёргается на экране поражения
   lvlOverlay.classList.add('hidden');
+  hideLabel('horn'); // рог больше не рисуется — убираем его HTML-подпись
   cv.classList.remove('grabbing');
   ovTitle.textContent = 'Врата пали…';
   ovText.innerHTML = 'Демоны ворвались в Асгард прямо посреди пира.<br>' +
