@@ -23,7 +23,7 @@ import flagmatterUrl from '../assets/sprites/flagmatter.png';
 import dialogBoxUrl  from '../assets/sprites/ui-dialog-box-empty.png';
 import triangleUrl   from '../assets/sprites/triangle.png';
 import crowUrl       from '../assets/sprites/crow.png';
-import thorUrl       from '../assets/sprites/Thor.png';
+import thorUrl       from '../assets/sprites/Thor-2.png';
 import bloodMiniUrl   from '../assets/sprites/blood-mini.png';
 import bloodMediumUrl from '../assets/sprites/blood-medium.png';
 import smoke1Url      from '../assets/sprites/smoke-1.png';

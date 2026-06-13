@@ -209,14 +209,19 @@ export function drawDialogue(last){
   if(portrait){
     const cr = c.crow;
     const isCrow = portraitKey === 'crow';
-    const off = isCrow ? hop * c.scale : 0;
+    // ворон рисуется в рамке 30×30 (×2 от 15×15) и прыгает; прочие портреты (Тор) —
+    // в натуральную величину × portraitScale (нарисованы под нужный масштаб), без прыжка.
+    const ps = c.portraitScale ?? 1;
+    const pw = (isCrow ? cr.w : portrait.width  * ps) * c.scale;
+    const ph = (isCrow ? cr.h : portrait.height * ps) * c.scale;
+    const off = isCrow ? hop * c.scale : (c.portraitOffsetY ?? 0) * c.scale;
     const cwx = bx + (cr.x + cr.w / 2) * c.scale;          // центр места портрета
     const cwy = by + (cr.y + cr.h / 2) * c.scale + off;
     const rot = isCrow ? Math.max(-cr.rotAmp, Math.min(cr.rotAmp, hopV * cr.rotAmp / 110)) : 0;
     cx.save();
     cx.translate(cwx, cwy);
     cx.rotate(rot);
-    cx.drawImage(portrait, -cr.w * c.scale / 2, -cr.h * c.scale / 2, cr.w * c.scale, cr.h * c.scale);
+    cx.drawImage(portrait, -pw / 2, -ph / 2, pw, ph);
     cx.restore();
   }
 

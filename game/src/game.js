@@ -284,6 +284,8 @@ let dragonSpawned = false, dragonTimer = 0, won = false;
 // машина финала после смерти дракона. Фазы (см. updateFinale):
 // null → 'pause' → 'dlgVictory' → 'horde' → 'lightningKill' → 'dlgThor' → 'victoryScreen' → 'endless'
 let finale = null, finaleT = 0;
+// врата неуязвимы от смерти дракона до момента, когда молнии Тора выкосят всю орду
+let gateInvuln = false;
 // размеры спрайта дракона (рисуется процедурно — см. drawDragon)
 const DRG_W = CFG.dragon.w, DRG_H = CFG.dragon.h;
 // данные законсервированной панели заклинаний (см. drawSpellUI — сейчас не вызывается)
@@ -716,6 +718,16 @@ function bomberBoom(x, y){
 
 function reachMountain(d){
   sfx.reach();
+  // финал: врата неуязвимы — моб разбивается о стену, урона вратам нет
+  if(gateInvuln){
+    shake = Math.max(shake, 5);
+    for(let i=0;i<8;i++){
+      particles.push({x:d.x, y:d.y+sizeOf(d)/2, vx:rnd(-80,180), vy:rnd(-200,-40),
+        col:'#7a4a32', life:rnd(.3,.7), size:rnd(2,4)});
+    }
+    demons.splice(demons.indexOf(d),1);
+    return;
+  }
   const dmgM = mountainDmg(TYPES[d.type].mtnDmg);
   hp = Math.max(0, hp - dmgM);
   hpFill.style.width = hp + '%';
@@ -733,6 +745,8 @@ function reachMountain(d){
 // Врата получают ДВОЙНОЙ урон, который этот моб нанёс бы им у стены.
 function cityBreach(d){
   sfx.reach();
+  // финал: врата неуязвимы — моб улетел в город, но урона вратам нет
+  if(gateInvuln){ demons.splice(demons.indexOf(d),1); return; }
   stats.cityBreaches++;
   const dmg = 2 * mountainDmg(TYPES[d.type].mtnDmg);
   hp = Math.max(0, hp - dmg);
@@ -1088,6 +1102,7 @@ function updateFireballs(dt){
 function beginFinale(){
   won = true;                       // боссов больше не спавним (см. updateBosses)
   finale = 'pause'; finaleT = CFG.finale.pauseTime;
+  gateInvuln = true;                // врата неуязвимы, пока Тор не выкосит орду
   clearMobsCathartic();             // в момент смерти дракона — все мобы гибнут разом
   fireballs = []; pendingFB = []; heldFireball = null;
   cv.classList.remove('grabbing');
@@ -1110,14 +1125,23 @@ function clearMobsCathartic(){
   demons = [];
 }
 
-// финальная орда: плотная стена неуязвимых титанов справа
+// финальная орда: фронт — стена неуязвимых титанов, позади — рой мелких прихвостней
 function spawnHorde(){
   const F = CFG.finale;
+  // титаны (фронт): неуязвимы, но их можно поднять и отшвырнуть недалеко
   for(let i = 0; i < F.hordeCount; i++){
     const d = spawnDemon('titan');
     d.horde = true; d.invuln = true;
     d.x = W + 10 + i * F.hordeGap + rnd(-8, 8);
     d.y = GROUND_Y - sizeOf(d);
+  }
+  // мелкие прихвостни (позади): обычные мобы, их можно давить
+  for(let i = 0; i < F.minionCount; i++){
+    const t = F.minionTypes[Math.floor(Math.random() * F.minionTypes.length)];
+    const d = spawnDemon(t);
+    d.horde = true;
+    d.x = W + 40 + Math.random() * F.minionSpread;
+    if(!TYPES[t].air) d.y = GROUND_Y - sizeOf(d);
   }
   floatText(W - 140, GROUND_Y - 120, 'ИХ СЛИШКОМ МНОГО!', '#c0392b', 1.6);
   shake = Math.max(shake, 10);
@@ -1145,6 +1169,7 @@ function skyLightningKill(){
   skyFlash = 1.6; shake = 28; sfx.splat();
   // орда мгновенно гибнет — разлетается и взрывается
   for(const d of [...demons]){ if(d.horde) explodeTitan(d); }
+  gateInvuln = false; // Тор уничтожил всех врагов — снимаем неуязвимость врат
 }
 
 function explodeTitan(d){
@@ -1215,6 +1240,18 @@ function toMainScreen(){
   finale = null; won = false; running = false;
   startScreen.classList.remove('hidden');
   music.menu();
+}
+
+// ВРЕМЕННАЯ дебаг-кнопка: перепрыгнуть сразу к финалу, начиная с диалога ворона
+// (минуя дракона и катарсис-паузу). Потом убрать вместе с кнопкой в index.html.
+function debugStartFinale(){
+  if(!running || finale) return; // только во время партии и не повторно
+  won = true; dragon = null;
+  clearMobsCathartic();
+  fireballs = []; pendingFB = []; heldFireball = null;
+  cv.classList.remove('grabbing');
+  startDialogue('victoryRaven');
+  finale = 'dlgVictory';
 }
 
 // «Бесконечный режим» — игра продолжается: поток мобов идёт без боссов и финала
@@ -1935,7 +1972,12 @@ function drawDust(){
     const tw = 0.5 + 0.5*Math.sin(p.t*p.twSpeed + p.twPhase); // мерцание 0..1
     dcx.globalAlpha = p.baseA * tw;
     dcx.fillStyle = '#fff4d6'; // тёплый свет пылинки
-    dcx.beginPath(); dcx.arc(p.x, p.y, p.r, 0, Math.PI*2); dcx.fill();
+    // квадратные пиксели разного размера. Размер — целый (1..4 px), но позицию
+    // НЕ округляем: иначе на медленном дрейфе пылинка прыгает по целым пикселям
+    // (рывки). Дробная позиция даёт плавное движение; края чуть мягче — на 1..4px
+    // незаметно.
+    const sz = Math.max(1, Math.round(p.r * 2));      // 1..4 px
+    dcx.fillRect(p.x - sz/2, p.y - sz/2, sz, sz);
   }
   dcx.restore();
 }
@@ -3368,6 +3410,8 @@ function closeSettings(){
   mouse.px = mouse.x; mouse.py = mouse.y; mouse.vx = mouse.vy = 0; // без фантомного рывка после паузы
 }
 settingsBtn.addEventListener('click', () => { sfx.tap(); openSettings(); settingsBtn.blur(); });
+// ВРЕМЕННО: дебаг-кнопка финала (потом убрать вместе с #debugFinaleBtn и debugStartFinale)
+document.getElementById('debugFinaleBtn').addEventListener('click', (e) => { debugStartFinale(); e.currentTarget.blur(); });
 settingsClose.addEventListener('click', () => { sfx.tap(); closeSettings(); });
 masterVolEl.addEventListener('input', () => {
   masterVolume = Math.max(0, Math.min(1, masterVolEl.value / 100));
@@ -3397,7 +3441,7 @@ function start({ skipTutorial = false, skipDialogue = false } = {}){
   fireballs=[]; pendingFB=[]; heldFireball=null; dragon=null; braziersLit=false;
   boss1Spawned=false; boss2Spawned=false; boss2Dead=false;
   dragonSpawned=false; dragonTimer=0; won=false;
-  finale=null; finaleT=0;
+  finale=null; finaleT=0; gateInvuln=false;
   ovWinButtons.classList.add('hidden'); ovButtons.classList.remove('hidden');
   swirls=[]; nextSwirl = rnd(CFG.tornado.swirlMin, CFG.tornado.swirlMax);
   for(const c of clouds){ c.charge = null; }

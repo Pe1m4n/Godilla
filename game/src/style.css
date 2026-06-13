@@ -200,6 +200,15 @@ canvas{
   border:2px solid var(--ink);cursor:pointer;
 }
 #fsBtn:hover{background:#ffd76a;}
+/* ВРЕМЕННАЯ дебаг-кнопка финала — справа снизу (потом убрать вместе с обработчиком) */
+#debugFinaleBtn{
+  position:fixed;right:12px;bottom:14px;z-index:10;
+  font-family:var(--font-pixel);font-size:9px;letter-spacing:1px;
+  padding:8px 12px;
+  background:#7a1f1f;color:#ffe0d0;
+  border:2px solid #1a1626;cursor:pointer;
+}
+#debugFinaleBtn:hover{background:#a23030;}
 /* плёночное зерно поверх всего экрана: картинку шума и прозрачность подставляет game.js (блок GRAIN) */
 #grain{
   position:fixed;inset:0;z-index:60;
