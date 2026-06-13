@@ -1,6 +1,8 @@
 import {
   DEMON_MAP, PALS_SMALL, PALS_BIG, PALS_HUGE,
+  DOG_MAP, PALS_DOG, PALS_ROLLER, PALS_BOMBER,
   CYC_MAP, CYC_PAL, SPELL_MAPS, SPELL_PALS,
+  HORN_MAP, HORN_PAL,
 } from './config.js';
 
 // ────────────────────────────────────────────────────────────────────
@@ -40,12 +42,17 @@ export function loadImage(src){
 }
 
 export const SPRITES = {
-  small: PALS_SMALL.map(p => bake(DEMON_MAP, p)),
-  big:   PALS_BIG.map(p => bake(DEMON_MAP, p)),
-  huge:  PALS_HUGE.map(p => bake(DEMON_MAP, p)),
+  small:  PALS_SMALL.map(p => bake(DEMON_MAP, p)),
+  big:    PALS_BIG.map(p => bake(DEMON_MAP, p)),
+  huge:   PALS_HUGE.map(p => bake(DEMON_MAP, p)),
+  dog:    PALS_DOG.map(p => bake(DOG_MAP, p)),
+  roller: PALS_ROLLER.map(p => bake(DEMON_MAP, p)),
+  bomber: PALS_BOMBER.map(p => bake(DEMON_MAP, p)),
 };
 
 export const CYC_SPRITE = bake(CYC_MAP, CYC_PAL);
+
+export const HORN_SPRITE = bake(HORN_MAP, HORN_PAL);
 
 export const SPELL_SPRITES = Object.fromEntries(
   Object.entries(SPELL_MAPS).map(([k, m]) => [k, bake(m, SPELL_PALS[k])])
