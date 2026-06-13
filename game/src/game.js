@@ -189,7 +189,9 @@ function drawSmoke(){
     // постоянная прозрачность: не проявляется и не затухает, просто уходит за край
     cx.globalAlpha = SMOKE.alpha;
     const h = sz * (img.height / img.width);
-    cx.drawImage(img, Math.round(p.x - sz/2), Math.round(p.y - h), sz, h);
+    // без Math.round: при медленном подъёме округление до целого пикселя
+    // даёт рывки (дрожь). Дыму субпиксельное положение не вредит.
+    cx.drawImage(img, p.x - sz/2, p.y - h, sz, h);
   }
   cx.globalAlpha = 1;
   // ДЕБАГ: красная точка в каждой точке спауна (поставь false, чтобы убрать)
@@ -1309,7 +1311,7 @@ function drawWindowRays(){
     { ang: 0.42, spread: 190, a: 0.07 },  // верхний луч — положе
     { ang: 0.84, spread: 240, a: 0.06 },  // нижний луч — круче
   ];
-  const base = 22; // толщина у самого окна (раньше 8) — лучи толще на выходе
+  const base = 40; // толщина у самого окна (раньше 8 → 22) — основание лучей толще
   for(const b of beams){
     const a = b.a * (0.82 + 0.18*Math.sin(t*0.6 + b.ang*7)); // лёгкое дыхание яркости
     dcx.save();
@@ -2548,14 +2550,20 @@ function startWithFade(skipNarrative){
     setTimeout(() => { fade.style.pointerEvents = 'none'; fading = false; }, 350);
   }, 600);
 }
+// звук тапа на ЛЮБОЕ нажатие кнопки UI — один делегированный обработчик (ловит и
+// динамические кнопки: карточки скиллов). Поэтому в обработчиках кнопок ниже tap
+// отдельно не зовём — иначе сыграет дважды.
+document.addEventListener('click', (e) => {
+  if(e.target.closest('button')) sfx.tap();
+});
 // обёртки-стрелки, чтобы в start() не прилетел объект события как skipNarrative
-startBtn.addEventListener('click', () => { sfx.tap(); startWithFade(false); });
+startBtn.addEventListener('click', () => startWithFade(false));
 // отладочная кнопка: старт без вступительного диалога и обучения
 const startNoNarrativeBtn = document.getElementById('startNoNarrativeBtn');
-startNoNarrativeBtn.addEventListener('click', () => { sfx.tap(); startWithFade(true); });
+startNoNarrativeBtn.addEventListener('click', () => startWithFade(true));
 // кнопки на письме (стартовый экран): «На работу» и отладочная без лора
-document.getElementById('startWallBtn').addEventListener('click', () => { sfx.tap(); startWithFade(false); });
-document.getElementById('startWallDebugBtn').addEventListener('click', () => { sfx.tap(); startWithFade(true); });
+document.getElementById('startWallBtn').addEventListener('click', () => startWithFade(false));
+document.getElementById('startWallDebugBtn').addEventListener('click', () => startWithFade(true));
 
 initDust();             // насыпать пылинки до первого кадра
 music.menu();           // в главном меню зациклено и приглушённо играет меню-трек

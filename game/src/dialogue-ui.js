@@ -37,11 +37,11 @@ let shown = 0;             // сколько уже «напечатано» (д
 let textEl = null;         // HTML-элемент с текстом реплики (см. buildTextEl)
 let nameEl = null;         // HTML-элемент с именем говорящего у портрета
 
-// ── «болтовня» ворона: пружинный подскок на печать букв ──
-// hop — вертикальное смещение (px, минус = вверх), hopV — его скорость.
-// На каждую N-ю букву даём толчок вверх; пружина возвращает к нулю с лёгким отскоком.
-// Когда печать кончилась, толчков нет — ворон плавно замирает.
-let hop = 0, hopV = 0, bobChars = 0;
+// ── подскоки ворона «прыг-прыг» в начале каждой реплики ──
+// hop — вертикальное смещение (px, минус = вверх), hopV — его скорость (пружина).
+// В начале реплики даём crow.hops толчков вверх с паузой crow.hopGap, потом ворон
+// плавно оседает к нулю. От печати/букв НЕ зависит.
+let hop = 0, hopV = 0, hopKicksLeft = 0, hopKickT = 0;
 const HOP_STIFF = 200;     // жёсткость пружины (выше — быстрее возврат)
 const HOP_DAMP  = 13;      // затухание (выше — меньше дрожит)
 
@@ -163,15 +163,17 @@ export function updateDialogue(dt){
   if(shown < totalChars){
     shown = Math.min(totalChars, shown + c.charsPerSec * dt);
     syncText();
-    // на каждую N-ю новую букву — толчок ворона вверх
-    const nc = Math.floor(shown);
-    const kick = c.crow.hopAmp * Math.sqrt(HOP_STIFF); // толчок под нужную высоту прыжка
-    while(bobChars < nc){
-      bobChars++;
-      if(bobChars % c.crow.bobEvery === 0) hopV -= kick;
+  }
+  // подскоки «прыг-прыг» в начале реплики: пускаем crow.hops толчков с паузой hopGap
+  if(hopKicksLeft > 0){
+    hopKickT -= dt;
+    if(hopKickT <= 0){
+      hopV -= c.crow.hopAmp * Math.sqrt(HOP_STIFF); // толчок под нужную высоту прыжка
+      hopKicksLeft--;
+      hopKickT = c.crow.hopGap;
     }
   }
-  // пружина (всегда, пока активен) — после печати ворон плавно оседает к нулю
+  // пружина (всегда, пока активен) — между и после толчков ворон плавно оседает к нулю
   hopV += (-HOP_STIFF * hop - HOP_DAMP * hopV) * dt;
   hop  += hopV * dt;
 }
@@ -181,7 +183,7 @@ function beginLine(){
   curText = lines[idx].text;
   totalChars = curText.length;
   shown = 0;
-  hop = 0; hopV = 0; bobChars = 0; // ворон начинает реплику в покое
+  hop = 0; hopV = 0; hopKicksLeft = DIALOGUE_CFG.crow.hops; hopKickT = 0; // запустить «прыг-прыг»
   syncText();
   if(nameEl) nameEl.textContent = lines[idx].name; // имя говорящего у портрета
 }

@@ -18,7 +18,7 @@ import cloud2Url     from '../assets/sprites/cloud-2.png';
 import cloud3Url     from '../assets/sprites/cloud-3.png';
 import flagstockUrl  from '../assets/sprites/flagstock.png';
 import flagmatterUrl from '../assets/sprites/flagmatter.png';
-import dialogBoxUrl  from '../assets/sprites/ui-dialog-box.png';
+import dialogBoxUrl  from '../assets/sprites/ui-dialog-box-empty.png';
 import triangleUrl   from '../assets/sprites/triangle.png';
 import crowUrl       from '../assets/sprites/crow.png';
 import bloodMiniUrl   from '../assets/sprites/blood-mini.png';

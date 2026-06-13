@@ -13,7 +13,7 @@
 // ── НАСТРОЙКИ ЗВУКА (тюнинг тут) ───────────────────────────────────────
 const SFX_CFG = {
   throw: { names: ['whoosh_1', 'whoosh_2'], vol: 0.55, pitchJitter: 0.12 }, // бросок: случайный вуш + разброс питча
-  tap:   { name: 'finger-tap',              vol: 0.6,  pitchJitter: 0.08 }, // нажатие кнопки
+  tap:   { name: 'finger-tap',              vol: 1.0,  pitchJitter: 0.08 }, // нажатие любой кнопки UI
   // удар: несколько вариаций сэмпла (разный питч/тембр) — берём случайную, плюс
   // питч ещё подкручивается силой удара. Файлы уже обрезаны от тишины в начале.
   slap:  { names: ['slap_1', 'slap_2', 'slap_3', 'slap_4'],
@@ -52,9 +52,15 @@ function ctx(){
     try{ AC = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){ return null; }
     loadSamples();
   }
-  if(AC.state === 'suspended') AC.resume();
+  if(AC.state === 'suspended') AC.resume().catch(() => {});
   return AC;
 }
+
+// Предзагрузка: создаём контекст и заранее декодируем сэмплы. Декодирование работает
+// и на «спящем» контексте (жест не нужен), поэтому к первому клику по кнопке сэмпл
+// тапа уже готов — играет он, а не запасной beep. Звук всё равно не зазвучит до
+// первого жеста (браузер держит контекст спящим), но клик его и разбудит.
+export function preloadAudio(){ ctx(); }
 
 function loadSamples(){
   for(const [name, url] of Object.entries(SND)){
