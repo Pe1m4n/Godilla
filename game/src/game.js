@@ -5,7 +5,7 @@ import {
   CYC_PAL, CYC_PX, CYC_W, CYC_H, CYC_EYE, SPELL_NAMES,
 } from './config.js';
 import { SPRITES, CYC_SPRITE, SPELL_SPRITES, tint } from './sprites.js';
-import { sfx, toggleMute } from './audio.js';
+import { sfx, setMuted as setSfxMuted, setMasterVolume } from './audio.js';
 import { music } from './music.js';
 import { art, cursorFrames } from './assets.js';
 import {
@@ -1528,7 +1528,7 @@ function ptr(e){
   return { x:(t.clientX-r.left)*(W/r.width), y:(t.clientY-r.top)*(H/r.height) };
 }
 function onDown(e){
-  if(!running || choosing) return;
+  if(!running || choosing || settingsOpen) return;
   // идёт диалог: клик допечатывает реплику / листает дальше, в игру не проходит
   if(dialogueActive()){
     dialogueClick();
@@ -1818,7 +1818,7 @@ function loop(ts){
   updateDialogue(dt); // печать реплики во времени (если идёт диалог)
   tutorialTick(dt);   // копит время показа обучающего сообщения (для блокировки пропуска)
   // диалог и обучение замораживают мир (диалог играется первым, до обучения)
-  if(running && !choosing && !tutorialFrozen() && !dialogueActive()) update(dt);
+  if(running && !choosing && !settingsOpen && !tutorialFrozen() && !dialogueActive()) update(dt);
   else shake = 0; // мир на паузе/стопе — всегда гасим тряску камеры (см. CLAUDE.md)
   draw();
   drawDust(); // пылинки стартового экрана — на своём холсте поверх письма
@@ -3175,13 +3175,72 @@ const startBtn = document.getElementById('startBtn');
 const startScreen = document.getElementById('startScreen'); // письмо от матери — только при первом запуске
 
 // кнопка звука (слева внизу)
-const muteBtn = document.getElementById('muteBtn');
-muteBtn.addEventListener('click', () => {
-  const m = toggleMute();
-  music.setMuted(m); // кнопка глушит и звуки, и музыку
-  muteBtn.textContent = m ? '🔇' : '🔊';
-  muteBtn.classList.toggle('muted', m);
-  muteBtn.blur(); // снять фокус, чтобы пробел/Enter не «нажимали» кнопку снова
+// ── настройки (шестерёнка): пауза + мут музыки/звуков отдельно + мастер-громкость ──
+const settingsBtn   = document.getElementById('settingsBtn');
+const settingsPanel = document.getElementById('settingsPanel');
+const settingsClose = document.getElementById('settingsClose');
+const masterVolEl   = document.getElementById('masterVol');
+const volVal        = document.getElementById('volVal');
+const musicBtn      = document.getElementById('musicBtn');
+const sfxBtn        = document.getElementById('sfxBtn');
+
+// сохранённые настройки звука
+let musicMuted = false, sfxMuted = false, masterVolume = 1;
+try {
+  musicMuted = localStorage.getItem('godilla.musicMuted') === '1';
+  sfxMuted   = localStorage.getItem('godilla.sfxMuted') === '1';
+  const v = localStorage.getItem('godilla.masterVol');
+  if(v !== null) masterVolume = Math.max(0, Math.min(1, parseFloat(v) || 0));
+} catch(e){}
+
+function refreshSettingsUI(){
+  masterVolEl.value = Math.round(masterVolume * 100);
+  volVal.textContent = Math.round(masterVolume * 100) + '%';
+  musicBtn.textContent = 'Музыка: ' + (musicMuted ? 'выкл' : 'вкл');
+  musicBtn.classList.toggle('off', musicMuted);
+  sfxBtn.textContent = 'Звуки: ' + (sfxMuted ? 'выкл' : 'вкл');
+  sfxBtn.classList.toggle('off', sfxMuted);
+}
+// применить настройки к аудио-системам (музыка + звуки)
+function applyAudioSettings(){
+  music.setVolume(masterVolume);   // мастер-громкость музыки
+  setMasterVolume(masterVolume);   // мастер-громкость звуков
+  music.setMuted(musicMuted);
+  setSfxMuted(sfxMuted);
+}
+applyAudioSettings();
+refreshSettingsUI();
+
+let settingsOpen = false;
+function openSettings(){
+  if(settingsOpen) return;
+  settingsOpen = true; shake = 0;
+  refreshSettingsUI();
+  settingsPanel.classList.remove('hidden');
+}
+function closeSettings(){
+  settingsOpen = false;
+  settingsPanel.classList.add('hidden');
+  mouse.px = mouse.x; mouse.py = mouse.y; mouse.vx = mouse.vy = 0; // без фантомного рывка после паузы
+}
+settingsBtn.addEventListener('click', () => { sfx.tap(); openSettings(); settingsBtn.blur(); });
+settingsClose.addEventListener('click', () => { sfx.tap(); closeSettings(); });
+masterVolEl.addEventListener('input', () => {
+  masterVolume = Math.max(0, Math.min(1, masterVolEl.value / 100));
+  try { localStorage.setItem('godilla.masterVol', String(masterVolume)); } catch(e){}
+  music.setVolume(masterVolume); setMasterVolume(masterVolume);
+  volVal.textContent = Math.round(masterVolume * 100) + '%';
+});
+musicBtn.addEventListener('click', () => {
+  musicMuted = !musicMuted; sfx.tap();
+  try { localStorage.setItem('godilla.musicMuted', musicMuted ? '1' : '0'); } catch(e){}
+  music.setMuted(musicMuted); refreshSettingsUI();
+});
+sfxBtn.addEventListener('click', () => {
+  sfxMuted = !sfxMuted;
+  try { localStorage.setItem('godilla.sfxMuted', sfxMuted ? '1' : '0'); } catch(e){}
+  setSfxMuted(sfxMuted); refreshSettingsUI();
+  if(!sfxMuted) sfx.tap(); // звук-подтверждение, если только что включили
 });
 
 // Старт партии. Флаги (любой можно выключить независимо):

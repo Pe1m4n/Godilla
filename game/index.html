@@ -26,7 +26,23 @@
       <div id="hpbar"><div id="hpfill"></div></div>
     </div>
   </div>
-  <button id="muteBtn" title="Звук вкл/выкл">🔊</button>
+  <button id="settingsBtn" title="Настройки">⚙</button>
+  <!-- модалка настроек: открывается по шестерёнке, ставит игру на паузу -->
+  <div id="settingsPanel" class="hidden">
+    <div id="settingsBox">
+      <h1>Настройки</h1>
+      <label id="volRow">Громкость
+        <input id="masterVol" type="range" min="0" max="100" value="100" aria-label="Мастер-громкость">
+        <span id="volVal">100%</span>
+      </label>
+      <div id="muteRow">
+        <button id="musicBtn" class="toggle">Музыка: вкл</button>
+        <button id="sfxBtn" class="toggle">Звуки: вкл</button>
+      </div>
+      <button id="settingsClose">Продолжить</button>
+    </div>
+  </div>
+
   <!-- стартовый экран: письмо от матери на столе. Показан при загрузке,
        прячется после старта (см. start() в game.js). Текст — HTML, не холст. -->
   <div id="startScreen">

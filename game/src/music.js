@@ -55,9 +55,16 @@ const players  = {};   // имя трека → HTMLAudioElement (создаёт
 const intended = {};   // имя трека → желаемая громкость БЕЗ учёта mute (0..1)
 const slope    = {};   // имя трека → скорость текущего перехода (громкость/сек)
 let muted = false;
+let masterVol = 1;     // общий множитель громкости музыки (ползунок), 0..1
 let raf = 0, lastT = 0;
 
 const clamp01 = v => Math.max(0, Math.min(1, v));
+
+// восстановить сохранённую громкость музыки
+try { const s = localStorage.getItem('godilla.masterVol'); if(s !== null) masterVol = clamp01(parseFloat(s) || 0); } catch(e){}
+
+// эффективная (реальная) громкость трека: цель × мастер, или 0 при муте
+function effVol(name){ return muted ? 0 : (intended[name] || 0) * masterVol; }
 
 // лениво создаём <audio> под трек: зациклен, начинается с нулевой громкости
 function ensure(name) {
@@ -75,7 +82,7 @@ function fadeTo(name, vol, seconds) {
   const a = ensure(name);
   if (!a) return;
   intended[name] = vol;
-  const eff = muted ? 0 : vol;
+  const eff = effVol(name);
   slope[name] = seconds > 0 ? Math.max(1e-4, Math.abs(a.volume - eff) / seconds) : 1e9;
   if (eff > 0 && !muted) a.play().catch(() => {}); // вызвано из обработчика клика — жест есть
   startTick();
@@ -91,7 +98,7 @@ function tick(t) {
   for (const name in intended) {
     const a = players[name];
     if (!a) continue;
-    const eff = muted ? 0 : intended[name];
+    const eff = effVol(name);
     if (eff > 0 && a.paused) a.play().catch(() => {});
     if (Math.abs(a.volume - eff) > 0.002) {
       const dir = Math.sign(eff - a.volume);
@@ -170,11 +177,26 @@ export const music = {
     for (const name in intended) {
       const a = players[name];
       if (!a) continue;
-      const eff = muted ? 0 : intended[name];
+      const eff = effVol(name);
       slope[name] = Math.max(1e-4, Math.abs(a.volume - eff) / MUSIC_CFG.muteFade);
     }
     startTick();
   },
+
+  // ползунок громкости музыки: общий множитель для всех треков (0..1), мгновенно
+  setVolume(v) {
+    masterVol = clamp01(v);
+    try { localStorage.setItem('godilla.masterVol', String(masterVol)); } catch(e){}
+    for (const name in intended) {
+      const a = players[name];
+      if (!a) continue;
+      const eff = effVol(name);
+      if (eff > 0 && !muted && a.paused) a.play().catch(() => {});
+      a.volume = clamp01(eff);
+      if (eff === 0 && !a.paused) a.pause();
+    }
+  },
+  volume() { return masterVol; },
 };
 
 // Автоплей: браузер не даёт играть звук до первого «жеста» пользователя. На старте

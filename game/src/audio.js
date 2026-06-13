@@ -37,10 +37,15 @@ if (SND['478284__joao_janz__finger-tap-2_2']) SND['finger-tap'] = SND['478284__j
 
 let AC = null;
 let muted = false;
+let masterVol = 1;    // общий множитель громкости звуков (мастер-ползунок), 0..1
+try { const s = localStorage.getItem('godilla.masterVol'); if(s !== null) masterVol = Math.max(0, Math.min(1, parseFloat(s) || 0)); } catch(e){}
+try { muted = localStorage.getItem('godilla.sfxMuted') === '1'; } catch(e){}
 const buffers = {};   // имя → декодированный AudioBuffer (заполняется асинхронно)
 
 export function toggleMute(){ muted = !muted; return muted; }
+export function setMuted(b){ muted = b; }           // мут звуков (отдельно от музыки)
 export function isMuted(){ return muted; }
+export function setMasterVolume(v){ masterVol = Math.max(0, Math.min(1, v)); } // мастер-громкость звуков
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -85,7 +90,7 @@ function playSample(name, vol = 0.6, rate = 1, jitter = 0, trim = 0){
   src.buffer = buf;
   src.playbackRate.value = Math.max(0.05, rate * (1 + (jitter ? rnd(-jitter, jitter) : 0)));
   const g = ac.createGain();
-  g.gain.value = vol;
+  g.gain.value = vol * masterVol;
   src.connect(g).connect(ac.destination);
   // trim — сколько секунд отрезать из начала файла (тишина перед звуком)
   const off = clamp(trim, 0, Math.max(0, buf.duration - 0.02));
@@ -100,7 +105,7 @@ function beep(freq, dur, type = 'square', vol = 0.08){
   try{
     const o = ac.createOscillator(), g = ac.createGain();
     o.type = type; o.frequency.value = freq;
-    g.gain.setValueAtTime(vol, ac.currentTime);
+    g.gain.setValueAtTime(vol * masterVol, ac.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
     o.connect(g).connect(ac.destination);
     o.start(); o.stop(ac.currentTime + dur);
