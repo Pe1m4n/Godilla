@@ -56,6 +56,12 @@ canvas{
 }
 #overlay button:hover{background:#3aa3a3;}
 #overlay button:focus-visible{outline:3px dashed var(--ui);outline-offset:3px;}
+/* отладочная кнопка — приглушённая и помельче, чтобы не путали с основной «Играть» */
+#overlay button.debug-btn{
+  font-size:9px;padding:7px 16px;background:transparent;
+  color:#8a86a0;border:2px dashed #4a4660;
+}
+#overlay button.debug-btn:hover{background:rgba(255,255,255,.06);color:#cfc9e6;}
 #muteBtn{
   position:absolute;left:12px;bottom:14px;z-index:5;
   font-family:var(--font-body);font-size:18px;line-height:1;

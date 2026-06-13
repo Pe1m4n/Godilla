@@ -91,9 +91,11 @@ function buildMsgEl(){
 function showMsg(on){ if(msgEl) msgEl.style.display = on ? 'block' : 'none'; }
 
 // сброс под новую партию (в start())
-export function resetTutorial(){
-  pending = CFG.tutorial.enabled; active = false; demon = null; showText(false);
-  cityPending = CFG.tutorial.enabled; msgActive = false; showMsg(false);
+// enabled — включать ли обучение в этой партии. По умолчанию берём из конфига;
+// отладочный старт «без диалогов и туторов» передаёт false и выключает обучение целиком.
+export function resetTutorial(enabled = CFG.tutorial.enabled){
+  pending = enabled; active = false; demon = null; showText(false);
+  cityPending = enabled; msgActive = false; showMsg(false);
 }
 
 export const tutorialActive = () => active;

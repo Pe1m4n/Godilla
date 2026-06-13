@@ -1753,7 +1753,9 @@ muteBtn.addEventListener('click', () => {
   muteBtn.blur(); // снять фокус, чтобы пробел/Enter не «нажимали» кнопку снова
 });
 
-function start(){
+// skipNarrative — отладочный старт «без диалогов и туторов»: вступительный диалог
+// не запускается, обучение выключено на всю партию (тумблеры конфига игнорируются).
+function start(skipNarrative = false){
   demons=[]; puddles=[]; particles=[]; cyclopes=[]; shockwaves=[];
   bolts=[]; boulders=[]; windStreaks=[]; heldBoulder=null; skyFlash=0; hornCd=0;
   for(const c of clouds){ c.charge = null; c.chargeT = 0; }
@@ -1761,7 +1763,7 @@ function start(){
   score=0; hp=100; held=null; betweenTimer=0;
   player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
   pendingLevels = 0; choosing = false;
-  resetTutorial();
+  resetTutorial(skipNarrative ? false : CFG.tutorial.enabled);
   scoreEl.textContent='0'; hpFill.style.width='100%';
   updateXPBar();
   startWave(0);
@@ -1770,7 +1772,8 @@ function start(){
   running = true;
   // вступительный диалог: пока он идёт, мир заморожен (см. цикл). Кончится —
   // выйдет первый моб и подхватит обучение. Тумблер — DIALOGUE_CFG.enabled.
-  startDialogue('intro');
+  // При отладочном старте диалог не запускаем — игра начинается сразу.
+  if(!skipNarrative) startDialogue('intro');
 }
 function gameOver(){
   running = false; held = null; heldBoulder = null;
@@ -1788,6 +1791,10 @@ function gameOver(){
   startBtn.textContent = 'Ещё раз';
   overlay.classList.remove('hidden');
 }
-startBtn.addEventListener('click', start);
+// обёртки-стрелки, чтобы в start() не прилетел объект события как skipNarrative
+startBtn.addEventListener('click', () => start(false));
+// отладочная кнопка: старт без вступительного диалога и обучения
+const startNoNarrativeBtn = document.getElementById('startNoNarrativeBtn');
+startNoNarrativeBtn.addEventListener('click', () => start(true));
 
 requestAnimationFrame(loop);
