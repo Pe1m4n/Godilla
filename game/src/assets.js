@@ -19,6 +19,7 @@ import cloud3Url     from '../assets/sprites/cloud-3.png';
 import flagstockUrl  from '../assets/sprites/flagstock.png';
 import flagmatterUrl from '../assets/sprites/flagmatter.png';
 import dialogBoxUrl  from '../assets/sprites/ui-dialog-box.png';
+import triangleUrl   from '../assets/sprites/triangle.png';
 import bloodMiniUrl   from '../assets/sprites/blood-mini.png';
 import bloodMediumUrl from '../assets/sprites/blood-medium.png';
 
@@ -26,7 +27,7 @@ const FILES = {
   sky: skyUrl, ground: groundUrl, grass: grassUrl, castle: castleUrl,
   cloud1: cloud1Url, cloud2: cloud2Url, cloud3: cloud3Url,
   flagstock: flagstockUrl, flagmatter: flagmatterUrl,
-  dialogBox: dialogBoxUrl,
+  dialogBox: dialogBoxUrl, triangle: triangleUrl,
   bloodMini: bloodMiniUrl, bloodMedium: bloodMediumUrl,
 };
 
@@ -49,7 +50,7 @@ export const art = {
   sky: null, ground: null, grass: null, castle: null,
   cloud1: null, cloud2: null, cloud3: null,
   flagstock: null, flagmatter: null,
-  dialogBox: null,
+  dialogBox: null, triangle: null,
   bloodMini: null, bloodMedium: null,
 };
 

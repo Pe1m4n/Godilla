@@ -361,7 +361,14 @@ function splat(d, sp){
   const big = d.type !== 'small';
   // размер лужи фиксирован по типу моба — от силы броска не зависит
   const maxR = d.type==='huge' ? rnd(34,46) : big ? rnd(26,38) : rnd(13,20);
-  puddles.push({x:px, y:GROUND_Y, r:0, max:maxR, col, life:1, size:bloodSize(d.type)});
+  // разбился ОБ СТЕНУ замка: при ударе моб прижат к стене (d.x === WALL.x) ниже её
+  // кромки. Тогда кровь брызгает вертикальным потёком по кладке, а не лужей на полу.
+  const onWall = d.x <= WALL.x + 0.5 && d.y + s > WALL.top;
+  if(onWall){
+    puddles.push({wall:true, x:WALL.x + 4, y:py - 2, r:0, max:maxR, col, life:1, size:bloodSize(d.type)});
+  } else {
+    puddles.push({x:px, y:GROUND_Y, r:0, max:maxR, col, life:1, size:bloodSize(d.type)});
+  }
   for(let i=0; i < (d.type==='huge' ? 30 : big ? 22 : 12); i++){
     particles.push({
       x:px, y:py,
@@ -1485,7 +1492,18 @@ function draw(){
   for(const pl of puddles){
     cx.globalAlpha = Math.min(1, pl.life)*0.9;
     const spr = bloodSprite(pl.size || 'medium', pl.col);
-    if (spr){
+    if (spr && pl.wall){
+      // след на стене: тот же спрайт повёрнут на 90° — длинная ось идёт вертикально
+      // вниз по кладке (потёк). Верх закреплён на точке удара (pl.y), а растёт потёк
+      // ТОЛЬКО ВНИЗ (после поворота локальная ось x смотрит вниз — рисуем от 0 до len).
+      const len = pl.r * 2;                          // длина потёка вдоль стены
+      const wide = len * (spr.height / spr.width);   // толщина потёка
+      cx.save();
+      cx.translate(pl.x, pl.y);
+      cx.rotate(Math.PI/2);
+      cx.drawImage(spr, 0, -wide/2, len, wide);
+      cx.restore();
+    } else if (spr){
       // спрайт-лужа растекается по полу: ширина растёт с pl.r, низ на линии земли
       const w = pl.r * 2;
       const h = w * (spr.height / spr.width);

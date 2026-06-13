@@ -48,7 +48,8 @@ canvas{
   background:rgba(26,22,38,.78);color:var(--ui);text-align:center;gap:18px;
 }
 #overlay h1{font-family:var(--font-pixel);font-size:26px;letter-spacing:1px;line-height:1.4;text-transform:uppercase;}
-#overlay p{font-size:15px;max-width:480px;line-height:1.7;color:#cfc9e6;}
+/* пиксельный шрифт плотнее Rubik — кегль меньше, межстрочный больше, поле шире */
+#overlay p{font-family:var(--font-pixel);font-size:10px;max-width:640px;line-height:2;color:#cfc9e6;}
 #overlay button{
   font-family:var(--font-pixel);font-size:14px;letter-spacing:1px;text-transform:uppercase;
   padding:12px 30px;background:var(--ground);color:var(--ui);
