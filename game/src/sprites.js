@@ -1,7 +1,7 @@
 import {
   DEMON_MAP, PALS_SMALL, PALS_BIG, PALS_HUGE,
   DOG_MAP, PALS_DOG, PALS_ROLLER, PALS_BOMBER,
-  BAT_MAP, PALS_BAT, PALS_WISP, PALS_CASTER, PALS_MOLE,
+  BAT_MAP, PALS_BAT, PALS_WISP, PALS_CASTER, PALS_MOLE, PALS_TITAN,
   CYC_MAP, CYC_PAL, SPELL_MAPS, SPELL_PALS,
   HORN_MAP, HORN_PAL,
 } from './config.js';
@@ -67,6 +67,7 @@ export const SPRITES = {
   wisp:   PALS_WISP.map(p => bake(BAT_MAP, p)),
   caster: PALS_CASTER.map(p => bake(DEMON_MAP, p)),
   mole:   PALS_MOLE.map(p => bake(DEMON_MAP, p)),
+  titan:  PALS_TITAN.map(p => bake(DEMON_MAP, p)),
 };
 
 export const CYC_SPRITE = bake(CYC_MAP, CYC_PAL);

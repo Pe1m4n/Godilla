@@ -61,11 +61,15 @@ export const DIALOGUE_CFG = {
   },
 };
 
+// portrait — ключ картинки-портрета у портретной рамки (см. assets.js art[...]).
+// Ворон и игрок показываются вороном (crow.png), Тор — своим портретом (Thor.png).
 export const SPEAKERS = {
   // вороненок-наставник: потомок воронов Одина, такой же зелёный, как игрок
-  raven:  { name: 'Хуги', who: 'Вороненок' },
+  raven:  { name: 'Хуги', who: 'Вороненок', portrait: 'crow' },
   // игрок: молодой бог ветра, защитник Асгарда (имя — плейсхолдер, легко поменять)
-  player: { name: 'Кари', who: 'Бог ветра' },
+  player: { name: 'Кари', who: 'Бог ветра', portrait: 'crow' },
+  // Тор — Громовержец, появляется в финале
+  thor:   { name: 'Тор', who: 'Громовержец', portrait: 'thor' },
 };
 
 // ── реплики ──
@@ -92,6 +96,23 @@ export const DIALOGUES = {
     { id: 'after_3', speaker: 'raven', text: 'Я серьёзно! Больше никаких бобов на обед!' },
   ],
 
+  // ── ПОБЕДА НАД ДРАКОНОМ ── ворон ликует, но замечает новую угрозу.
+  victoryRaven: [
+    { id: 'vr_1', speaker: 'raven', text: '{player}! Мы справились!' },
+    { id: 'vr_2', speaker: 'raven', text: 'Если за это тебя не возвысят — то я уж не знаю, за что ещё могут.' },
+    { id: 'vr_3', speaker: 'raven', text: 'Я тоже окажусь на пиру! Вот бы поглядеть на удивлённые клювы Хугина и Мунина.' },
+    { id: 'vr_4', speaker: 'raven', text: '....' },
+    { id: 'vr_5', speaker: 'raven', text: '....' },
+    { id: 'vr_6', speaker: 'raven', text: 'О нет... похоже, это не конец...' },
+    { id: 'vr_7', speaker: 'raven', text: 'Нам не справиться.' },
+  ],
+
+  // ── ТОР ── появляется после того, как молнии с небес выкашивают орду.
+  thor: [
+    { id: 'thor_1', speaker: 'thor', text: 'Поздравляю тебя, юный Бог! Ваш с птицей подвиг не забудут!' },
+    { id: 'thor_2', speaker: 'thor', text: 'Я, если желаешь, закончу здесь сам... или?' },
+  ],
+
 };
 
 // ── подстановка имён ──
@@ -109,6 +130,7 @@ export function getLines(key) {
   return group.map(line => ({
     ...line,
     name: SPEAKERS[line.speaker]?.name ?? '',
+    portrait: SPEAKERS[line.speaker]?.portrait ?? 'crow',
     text: fill(line.text),
   }));
 }

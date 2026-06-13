@@ -23,6 +23,7 @@ import flagmatterUrl from '../assets/sprites/flagmatter.png';
 import dialogBoxUrl  from '../assets/sprites/ui-dialog-box-empty.png';
 import triangleUrl   from '../assets/sprites/triangle.png';
 import crowUrl       from '../assets/sprites/crow.png';
+import thorUrl       from '../assets/sprites/Thor.png';
 import bloodMiniUrl   from '../assets/sprites/blood-mini.png';
 import bloodMediumUrl from '../assets/sprites/blood-medium.png';
 import smoke1Url      from '../assets/sprites/smoke-1.png';
@@ -34,7 +35,7 @@ const FILES = {
   sky: skyUrl, mountains: mountainUrl, tint: tintUrl, ground: groundUrl, grass: grassUrl, castle: castleUrl,
   cloud1: cloud1Url, cloud2: cloud2Url, cloud3: cloud3Url,
   flagstock: flagstockUrl, flagmatter: flagmatterUrl,
-  dialogBox: dialogBoxUrl, triangle: triangleUrl, crow: crowUrl,
+  dialogBox: dialogBoxUrl, triangle: triangleUrl, crow: crowUrl, thor: thorUrl,
   bloodMini: bloodMiniUrl, bloodMedium: bloodMediumUrl,
   smoke1: smoke1Url, smoke2: smoke2Url, smoke3: smoke3Url, smoke4: smoke4Url,
 };
@@ -58,7 +59,7 @@ export const art = {
   sky: null, mountains: null, tint: null, ground: null, grass: null, castle: null,
   cloud1: null, cloud2: null, cloud3: null,
   flagstock: null, flagmatter: null,
-  dialogBox: null, triangle: null, crow: null,
+  dialogBox: null, triangle: null, crow: null, thor: null,
   bloodMini: null, bloodMedium: null,
   smoke1: null, smoke2: null, smoke3: null, smoke4: null,
 };

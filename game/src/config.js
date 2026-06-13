@@ -138,6 +138,22 @@ export const CFG = {
     mole:  { px: 3.5, hp: 3, mtnDmg: 22, speedMin: 16, speedMax: 24, grabR: 34, score: 4,
              throwF: 0.2,    follow: 14, shakeHurt: 9,  shakeSplat: 15,
              burrow: 1, burrowSpeed: 135, emergeAt: 0.5 },
+    // ТИТАН — мобы финальной орды: самые крупные, неуязвимые и неподъёмные. Спавнятся
+    // только в финале (не в обычном потоке). Их выкашивают молнии Тора, а не игрок.
+    titan: { px: 8, hp: 9999, mtnDmg: 50, speedMin: 95, speedMax: 118, grabR: 0, score: 0,
+             throwF: 0.1, follow: 6, shakeHurt: 12, shakeSplat: 22, liftable: false },
+  },
+
+  // ── ФИНАЛ ── после гибели дракона: катарсис → реплики ворона → неубиваемая орда →
+  // молнии Тора с небес → реплики Тора → экран победы (оставить имя / бесконечный режим).
+  finale: {
+    pauseTime: 2.5,          // катарсис: пауза без мобов сразу после смерти дракона, сек
+    hordeCount: 16,          // сколько титанов выходит в финальной орде
+    hordeGap: 26,            // расстояние между ними на выходе (плотно, стеной)
+    lightningLeftFrac: 0.2,  // молнии бьют, когда переднему титану осталось 20% пути до врат
+    boltCount: 5,            // сколько смертельных молний с небес
+    boltScale: 2.3,          // во сколько раз молнии толще/больше обычных
+    killPause: 1.1,          // пауза после удара молний до появления Тора, сек
   },
 
   cyclops: {
@@ -462,9 +478,14 @@ export const PALS_CASTER = [
 export const PALS_MOLE = [
   {b:'#5a4326', h:'#2a1d10', W:'#ffe9a8', m:'#160d05'},
 ];
+// титан финальной орды — почти чёрный гигант с раскалёнными глазами
+export const PALS_TITAN = [
+  {b:'#120a14', h:'#c0392b', W:'#ff3b2f', m:'#000000'},
+];
 export const PALS = { small: PALS_SMALL, big: PALS_BIG, huge: PALS_HUGE,
   dog: PALS_DOG, roller: PALS_ROLLER, bomber: PALS_BOMBER,
-  bat: PALS_BAT, wisp: PALS_WISP, caster: PALS_CASTER, mole: PALS_MOLE };
+  bat: PALS_BAT, wisp: PALS_WISP, caster: PALS_CASTER, mole: PALS_MOLE,
+  titan: PALS_TITAN };
 
 // ── циклоп ─────────────────────────────────────────────────────────
 // идёт боком (в профиль), глаз смотрит влево — в сторону врат

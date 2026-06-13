@@ -202,16 +202,21 @@ export function drawDialogue(last){
     cx.strokeStyle = '#e8dcc0'; cx.lineWidth = 2; cx.strokeRect(bx+2, by+2, bw-4, bh-4);
   }
 
-  // ворон поверх пустой рамки портрета: подскакивает и кренится на печать (hop/hopV)
-  if(art.crow){
+  // портрет говорящего поверх пустой рамки. Ворон подскакивает и кренится на печать
+  // (hop/hopV); прочие портреты (Тор) стоят неподвижно.
+  const portraitKey = lines[idx]?.portrait ?? 'crow';
+  const portrait = art[portraitKey] || art.crow;
+  if(portrait){
     const cr = c.crow;
-    const cwx = bx + (cr.x + cr.w / 2) * c.scale;          // центр места ворона
-    const cwy = by + (cr.y + cr.h / 2) * c.scale + hop * c.scale;
-    const rot = Math.max(-cr.rotAmp, Math.min(cr.rotAmp, hopV * cr.rotAmp / 110));
+    const isCrow = portraitKey === 'crow';
+    const off = isCrow ? hop * c.scale : 0;
+    const cwx = bx + (cr.x + cr.w / 2) * c.scale;          // центр места портрета
+    const cwy = by + (cr.y + cr.h / 2) * c.scale + off;
+    const rot = isCrow ? Math.max(-cr.rotAmp, Math.min(cr.rotAmp, hopV * cr.rotAmp / 110)) : 0;
     cx.save();
     cx.translate(cwx, cwy);
     cx.rotate(rot);
-    cx.drawImage(art.crow, -cr.w * c.scale / 2, -cr.h * c.scale / 2, cr.w * c.scale, cr.h * c.scale);
+    cx.drawImage(portrait, -cr.w * c.scale / 2, -cr.h * c.scale / 2, cr.w * c.scale, cr.h * c.scale);
     cx.restore();
   }
 

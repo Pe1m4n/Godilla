@@ -142,6 +142,17 @@ canvas{
 }
 #ov-buttons button#startNoTutBtn:hover,
 #ov-buttons button#startNoNarrativeBtn:hover{background:#4a3a29;color:#f1e7d4;}
+/* кнопки экрана победы: «оставить имя» — золотистая (главная), «бесконечный» — приглушённая */
+#ov-win-buttons{display:flex;flex-direction:column;align-items:stretch;gap:9px;width:100%;margin-top:4px;}
+#ov-win-buttons button{
+  font-family:var(--font-pixel);cursor:pointer;border:none;
+  font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:11px 14px;
+}
+#ov-win-buttons button#leaveNameBtn{background:#8a6d2f;color:#fff7e0;}
+#ov-win-buttons button#leaveNameBtn:hover{background:#a9863c;}
+#ov-win-buttons button#endlessBtn{font-size:9px;padding:9px 12px;background:#33271c;color:#c9bca4;}
+#ov-win-buttons button#endlessBtn:hover{background:#4a3a29;color:#f1e7d4;}
+#ov-win-buttons button:focus-visible{outline:2px dashed #f1e7d4;outline-offset:2px;}
 /* шестерёнка настроек — слева снизу */
 #settingsBtn{
   position:absolute;left:12px;bottom:14px;z-index:5;
