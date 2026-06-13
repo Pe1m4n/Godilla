@@ -22,6 +22,10 @@ import dialogBoxUrl  from '../assets/sprites/ui-dialog-box.png';
 import triangleUrl   from '../assets/sprites/triangle.png';
 import bloodMiniUrl   from '../assets/sprites/blood-mini.png';
 import bloodMediumUrl from '../assets/sprites/blood-medium.png';
+import smoke1Url      from '../assets/sprites/smoke-1.png';
+import smoke2Url      from '../assets/sprites/smoke-2.png';
+import smoke3Url      from '../assets/sprites/smoke-3.png';
+import smoke4Url      from '../assets/sprites/smoke-4.png';
 
 const FILES = {
   sky: skyUrl, ground: groundUrl, grass: grassUrl, castle: castleUrl,
@@ -29,6 +33,7 @@ const FILES = {
   flagstock: flagstockUrl, flagmatter: flagmatterUrl,
   dialogBox: dialogBoxUrl, triangle: triangleUrl,
   bloodMini: bloodMiniUrl, bloodMedium: bloodMediumUrl,
+  smoke1: smoke1Url, smoke2: smoke2Url, smoke3: smoke3Url, smoke4: smoke4Url,
 };
 
 // ── курсор-рука: кадры 16×16, файлы back1.png … back33.png ──
@@ -52,6 +57,7 @@ export const art = {
   flagstock: null, flagmatter: null,
   dialogBox: null, triangle: null,
   bloodMini: null, bloodMedium: null,
+  smoke1: null, smoke2: null, smoke3: null, smoke4: null,
 };
 
 // запустить загрузку (ничего не блокирует — появятся в кадре по готовности)
