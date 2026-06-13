@@ -272,6 +272,17 @@ function bloodSprite(size, col){
 let demons = [], puddles = [], particles = [], cyclopes = [], shockwaves = [];
 let bolts = [], boulders = [], windStreaks = [], shots = [], tornadoes = [];
 let heldBoulder = null; // отобранный у носильщика валун в руке: {x, y}
+// ── боссы (последовательность из трёх) ──
+let fireballs = [];     // огненные шары дракона: летят к стене; пойманные — обратно
+let pendingFB = [];     // отложенные выстрелы дракона (задержка между двумя в ярости)
+let heldFireball = null;// пойманный фаербол в руке (следует за курсором)
+let dragon = null;      // 3-й босс, пока null — не вышел
+let braziersLit = false;// разгорелись ли жаровни на крыше (на 2-й минуте)
+// контроллер появления боссов: каждый выходит один раз в свой момент
+let boss1Spawned = false, boss2Spawned = false, boss2Dead = false;
+let dragonSpawned = false, dragonTimer = 0, won = false;
+// размеры спрайта дракона (рисуется процедурно — см. drawDragon)
+const DRG_W = CFG.dragon.w, DRG_H = CFG.dragon.h;
 // данные законсервированной панели заклинаний (см. drawSpellUI — сейчас не вызывается)
 let spellSlots = [{id:'lightning', cd:0}, {id:'boulder', cd:0}, {id:'wind', cd:0}];
 let heldSpell = null;   // заклинание в руке: {id, slot, x, y}
@@ -543,7 +554,7 @@ function updateCyclopsBurn(c, dt){
   }
   while(c.burnTick <= 0 && cyclopes.includes(c)){
     c.burnTick += FIRE.tickEvery;
-    hitCyclops(c, FIRE.tickDmg + sk('wildfire'));
+    hitCyclops(c, FIRE.tickDmg + sk('wildfire'), true);
   }
   if(!cyclopes.includes(c)) return false;
   if(c.burnT <= 0) c.burnT = 0;
@@ -557,6 +568,7 @@ function circleHitsRect(cx0, cy0, r, x, y, w, h){
 }
 
 function overlapsBrazier(d, s){
+  if(!braziersLit) return false; // до 2-й минуты жаровни не горят — поджечь нельзя
   for(const bz of BRAZIERS){
     if(circleHitsRect(bz.x, bz.y, FIRE.brazierR, d.x, d.y, s, s)) return true;
   }
@@ -757,6 +769,11 @@ function tutorialScan(dt){
       msgHi = { cyc: cyclopes[0] }; return true;
     }
   } else cycTutT = 0;
+  // циклоп с деревянным забралом (2-й босс) — жечь его огнём
+  const cv2 = cyclopes.find(c => c.visor > 0);
+  if(cv2 && tutorialTryMessage('visor', T.visorTitle, T.visorSub, 'click')){ msgHi = null; return true; }
+  // дракон (3-й босс) — ловить фаерболы и метать обратно
+  if(dragon && tutorialTryMessage('dragon', T.dragonTitle, T.dragonSub, 'click')){ msgHi = null; return true; }
   return false;
 }
 
@@ -832,23 +849,51 @@ function drawMsgHighlight(){
   }
 }
 
-function spawnCyclops(){
+function spawnCyclops(opts = {}){
   cyclopes.push({
     x: W + 10, y: GROUND_Y - CYC_H,
     hp: CFG.cyclops.hp, t: rnd(0,10), step: 0.8,
     state: 'walk', poundT: 0, eyeFlash: 0, freeze: 0,
     burnT: 0, burnTick: 0, burnFx: 0,
+    // деревянное забрало (2-й босс): пока visor>0 — глаз неуязвим, кроме огня
+    visor: opts.visor ? CFG.bosses.visorHits : 0,
+    visorFlash: 0,
+    boss2: !!opts.visor, // по смерти этого — запускаем дракона
   });
-  floatText(W-90, GROUND_Y - CYC_H - 24, 'ЦИКЛОП!', '#c0392b', 1.6);
+  floatText(W-90, GROUND_Y - CYC_H - 24, opts.visor ? 'ЦИКЛОП В ЗАБРАЛЕ!' : 'ЦИКЛОП!', '#c0392b', 1.6);
 }
 
-function hitCyclops(c, dmg){
+// fromFire=true — удар «горящий» (горящий моб / сам циклоп в огне). Деревянное забрало
+// 2-го босса рушится ТОЛЬКО такими ударами; любой другой урон по забралу не проходит.
+function hitCyclops(c, dmg, fromFire = false){
+  if(c.visor > 0){
+    if(fromFire){
+      c.visor--; c.visorFlash = 0.4;
+      sfx.hurt(); shake = Math.max(shake, 7);
+      for(let i=0;i<12;i++){
+        particles.push({x:c.x+CYC_EYE.x, y:c.y+CYC_EYE.y, vx:rnd(-180,40), vy:rnd(-200,-20),
+          col:'#7a4a32', life:rnd(.4,.9), size:rnd(2,5)});
+      }
+      if(c.visor <= 0){
+        floatText(c.x+CYC_EYE.x, c.y+CYC_EYE.y-20, 'ЗАБРАЛО РАЗБИТО!', '#ffcf3a', 1.4);
+        c.eyeFlash = 0.5;
+      } else {
+        floatText(c.x+CYC_EYE.x, c.y+CYC_EYE.y-16, 'ЗАБРАЛО ТРЕЩИТ!', '#e85b21', 1);
+      }
+    } else {
+      // дерево держит обычный удар — клац, без урона
+      sfx.thud(); shake = Math.max(shake, 3);
+      floatText(c.x+CYC_EYE.x, c.y+CYC_EYE.y-16, 'ЗАБРАЛО ДЕРЖИТ!', '#8a8893', 0.9);
+    }
+    return;
+  }
   c.hp -= dmg;
   c.eyeFlash = 0.35;
   sfx.hurt();
   shake = Math.max(shake, CFG.cyclops.shakeHit);
   floatText(c.x+CYC_EYE.x, c.y+CYC_EYE.y-16, '-'+dmg+' ХП', '#c0392b', 1);
   if(c.hp <= 0){
+    if(c.boss2){ boss2Dead = true; dragonTimer = CFG.bosses.dragonDelay; } // следом выйдет дракон
     sfx.splat(); shake = CFG.cyclops.shakeDeath;
     stats.kills.cyclops = (stats.kills.cyclops || 0) + 1; stats.killsTotal++;
     score += CFG.cyclops.score; scoreEl.textContent = score;
@@ -864,6 +909,193 @@ function hitCyclops(c, dmg){
     floatText(px, c.y+26, '+'+CFG.cyclops.score, '#b8860b', 1.5);
     cyclopes.splice(cyclopes.indexOf(c),1);
   }
+}
+
+// ── контроллер боссов: трое выходят по очереди, каждый один раз ──
+// 1) обычный циклоп (момент — stream.cyclopsFirst); 2) циклоп с забралом (bosses.visorAt,
+// только когда сцена свободна от прежнего босса); 3) дракон — через bosses.dragonDelay
+// после гибели 2-го босса. Победа наступает по смерти дракона (см. hitDragon → winGame).
+function updateBosses(dt){
+  if(won) return;
+  if(!boss1Spawned && gameTime >= CFG.stream.cyclopsFirst && cyclopes.length === 0){
+    spawnCyclops(); boss1Spawned = true;
+  } else if(boss1Spawned && !boss2Spawned && gameTime >= CFG.bosses.visorAt && cyclopes.length === 0){
+    spawnCyclops({ visor: true }); boss2Spawned = true;
+  }
+  if(boss2Dead && !dragonSpawned){
+    dragonTimer -= dt;
+    if(dragonTimer <= 0){ spawnDragon(); dragonSpawned = true; }
+  }
+}
+
+function spawnDragon(){
+  const D = CFG.dragon;
+  dragon = {
+    x: W + 60, y: GROUND_Y - DRG_H, hp: D.hp,
+    state: 'enter',                 // enter — въезжает к краю; fight — встал и атакует
+    targetX: W - DRG_W - D.margin,
+    t: 0, attackT: D.firstAttackDelay, eyeFlash: 0,
+    enrage: false, blink: 0, atkCount: 0,
+  };
+  floatText(W - 130, GROUND_Y - DRG_H - 18, 'ДРАКОН!', '#e85b21', 1.8);
+  shake = Math.max(shake, 16);
+}
+
+// точка вылета фаербола — пасть дракона (нижне-левая часть морды)
+const dragonMouth = () => ({ x: dragon.x + DRG_W*0.16, y: dragon.y + DRG_H*0.46 });
+
+function spawnFireball(x, y, vx, vy){
+  fireballs.push({ x, y, vx, vy, r: CFG.dragon.fbR, t: 0, hostile: true, held: false, trailT: 0 });
+}
+
+// дракон атакует: чередует три вида (см. CFG.dragon). В ярости каждый второй залп —
+// два быстрых прямых фаербола.
+function dragonAttack(){
+  const D = CFG.dragon, dr = dragon, m = dragonMouth();
+  shake = Math.max(shake, 6); sfx.reach();
+  let kind;
+  if(dr.enrage && (dr.atkCount % 2 === 1)) kind = 'enrage';
+  else kind = (dr.atkCount % 2 === 0) ? 'fast' : 'arc';
+  dr.atkCount++;
+  if(kind === 'fast'){
+    spawnFireball(m.x, m.y, -D.fast.speed, 0);
+  } else if(kind === 'arc'){
+    for(let i = 0; i < D.arc.count; i++){
+      const vy = (i - (D.arc.count - 1) / 2) * D.arc.vyStep;
+      spawnFireball(m.x, m.y, -D.arc.speed, vy);
+    }
+  } else { // enrage: два быстрых прямых с маленькой задержкой
+    spawnFireball(m.x, m.y, -D.enrageShot.speed, 0);
+    pendingFB.push({ delay: D.enrageShot.gap, vx: -D.enrageShot.speed, vy: 0 });
+  }
+}
+
+function hitDragon(dmg){
+  const dr = dragon; if(!dr) return;
+  const D = CFG.dragon;
+  dr.hp -= dmg; dr.eyeFlash = D.eyeFlashTime;
+  sfx.hurt(); shake = Math.max(shake, 11);
+  floatText(dr.x + DRG_W*0.2, dr.y + DRG_H*0.28, '-'+dmg, '#ffcf3a', 1.2);
+  if(!dr.enrage && dr.hp <= D.hp * D.enrageAt){
+    dr.enrage = true;
+    floatText(dr.x + DRG_W/2, dr.y - 6, 'ДРАКОН В ЯРОСТИ!', '#ff3030', 1.5);
+    shake = Math.max(shake, 14);
+  }
+  if(dr.hp <= 0){
+    sfx.splat(); shake = 24;
+    const px = dr.x + DRG_W*0.4, py = dr.y + DRG_H*0.45;
+    for(let i = 0; i < 60; i++){
+      particles.push({x:px+rnd(-DRG_W*0.3,DRG_W*0.3), y:py+rnd(-DRG_H*0.3,DRG_H*0.3),
+        vx:rnd(-400,400), vy:rnd(-560,-80),
+        col: i%2 ? '#e85b21' : '#3d1f2e', life:rnd(.6,1.3), size:rnd(3,8)});
+    }
+    floatText(px, py, 'ПОВЕРЖЕН!!!', '#ffcf3a', 1.8);
+    dragon = null;
+    winGame();
+  }
+}
+
+function updateDragon(dt){
+  // отложенные выстрелы (второй фаербол залпа ярости) — тикают даже без активного боя
+  for(const pf of [...pendingFB]){
+    pf.delay -= dt;
+    if(pf.delay <= 0){
+      if(dragon){ const m = dragonMouth(); spawnFireball(m.x, m.y, pf.vx, pf.vy); }
+      pendingFB.splice(pendingFB.indexOf(pf), 1);
+    }
+  }
+  if(!dragon) return;
+  const D = CFG.dragon, dr = dragon;
+  dr.t += dt;
+  if(dr.eyeFlash > 0) dr.eyeFlash -= dt;
+  if(dr.state === 'enter'){
+    dr.x -= D.enterSpeed * dt;
+    if(dr.x <= dr.targetX){ dr.x = dr.targetX; dr.state = 'fight'; shake = Math.max(shake, 10); }
+    return;
+  }
+  if(dr.enrage) dr.blink += dt;
+  dr.attackT -= dt;
+  if(dr.attackT <= 0){
+    dragonAttack();
+    const j = D.attackJitter;
+    dr.attackT = D.attackEvery * rnd(1 - j*0.5, 1 + j*0.5);
+  }
+}
+
+// фаерболы: враждебные летят к стене (урон вратам при касании), пойманные/возвращённые —
+// бьют дракона (его же огнём) и мобов. Пойманный (held) висит на курсоре — его не двигаем.
+function updateFireballs(dt){
+  const D = CFG.dragon;
+  for(const fb of [...fireballs]){
+    if(fb.held) continue;
+    fb.t += dt;
+    fb.x += fb.vx * dt; fb.y += fb.vy * dt;
+    // искры-хвост
+    fb.trailT -= dt;
+    if(fb.trailT <= 0){ fb.trailT = D.trailEvery; emitFireParticles(fb.x, fb.y, 2, 0.5); }
+
+    if(fb.hostile){
+      // долетел до стены — урон вратам (сколизил по камню), вспышка
+      if(fb.x - fb.r <= MOUNTAIN_X){
+        const dmg = mountainDmg(D.grazeDmg);
+        hp = Math.max(0, hp - dmg); hpFill.style.width = hp + '%';
+        shake = Math.max(shake, 8); sfx.reach();
+        floatText(MOUNTAIN_X + 20, fb.y, '-'+dmg, '#e85b21', 1.1);
+        emitFireParticles(fb.x, fb.y, 14, 1);
+        fireballs.splice(fireballs.indexOf(fb), 1);
+        if(hp <= 0){ gameOver(); return; }
+        continue;
+      }
+    } else {
+      // возвращённый фаербол: попал в дракона — единственный способ ранить его
+      if(dragon && fb.x > dragon.x + DRG_W*0.08 && fb.x < dragon.x + DRG_W*0.96 &&
+         fb.y > dragon.y + DRG_H*0.02 && fb.y < dragon.y + DRG_H*0.92){
+        hitDragon(D.hitDmg);
+        emitFireParticles(fb.x, fb.y, 16, 1.1);
+        fireballs.splice(fireballs.indexOf(fb), 1);
+        continue;
+      }
+      // ...или в мобов (можно метать и в толпу)
+      let hitMob = false;
+      for(const o of [...demons]){
+        if(o.state==='held' || o.state==='offscreen' || o.state==='burrow' || o.flash>0 || !demons.includes(o)) continue;
+        const os = sizeOf(o);
+        if(Math.hypot(o.x+os/2 - fb.x, o.y+os/2 - fb.y) < fb.r + os*0.45){
+          igniteDemon(o, 'spread');
+          hurt(o, D.mobDmg, Math.max(Math.hypot(fb.vx, fb.vy), 400));
+          hitMob = true; break;
+        }
+      }
+      if(hitMob){
+        emitFireParticles(fb.x, fb.y, 10, 0.9);
+        fireballs.splice(fireballs.indexOf(fb), 1);
+        continue;
+      }
+    }
+    // ушёл за край экрана
+    if(fb.x < -70 || fb.x > W + 90 || fb.y > H + 90 || fb.y < -120){
+      fireballs.splice(fireballs.indexOf(fb), 1);
+    }
+  }
+}
+
+function winGame(){
+  won = true;
+  logSession();
+  running = false; held = null; heldBoulder = null; heldFireball = null;
+  choosing = false; pendingLevels = 0;
+  shake = 0;
+  music.menu();
+  lvlOverlay.classList.add('hidden');
+  hideLabel('horn');
+  cv.classList.remove('grabbing');
+  ovTitle.textContent = 'ТЫ ПОБЕДИЛ!';
+  ovText.innerHTML = 'Дракон повержен, и западная стена Асгарда выстояла.<br>' +
+    'Хуги уже разносит весть о победе по всем чертогам.<br>' +
+    'Сам Один поднимает кубок в твою честь — ты заслужил место за его столом!';
+  ovScore.textContent = 'Очки: ' + score;
+  ovScore.classList.remove('hidden');
+  overlay.classList.remove('hidden');
 }
 
 // ── поток врагов ───────────────────────────────────────────────────
@@ -1358,6 +1590,23 @@ function onDown(e){
       return;
     }
   }
+  // 1.5) клик по летящему фаерболу дракона — ловим его в руку (потом метнём обратно)
+  if(!heldFireball){
+    let fbBest = null, fbd = 1e9;
+    for(const fb of fireballs){
+      if(fb.held || !fb.hostile) continue;
+      const dist = Math.hypot(p.x - fb.x, p.y - fb.y);
+      if(dist <= CFG.dragon.grabR + fb.r && dist < fbd){ fbBest = fb; fbd = dist; }
+    }
+    if(fbBest){
+      fbBest.held = true; fbBest.vx = fbBest.vy = 0;
+      heldFireball = fbBest;
+      cv.classList.add('grabbing'); sfx.grab();
+      floatText(fbBest.x, fbBest.y - 16, 'ПОЙМАЛ!', '#ffcf3a', 1.1);
+      e.preventDefault();
+      return;
+    }
+  }
   // 2) хватаешь носильщика — отбираешь у него валун (а не поднимаешь его самого)
   for(const d of demons){
     if(d.type !== 'roller' || !d.hasBoulder || d.state !== 'walk') continue;
@@ -1411,9 +1660,21 @@ function onDown(e){
 function onMove(e){
   const p = ptr(e);
   mouse.x = p.x; mouse.y = p.y;
-  if(held || heldBoulder) e.preventDefault();
+  if(heldFireball){ heldFireball.x = p.x; heldFireball.y = p.y; }
+  if(held || heldBoulder || heldFireball) e.preventDefault();
 }
 function onUp(){
+  if(heldFireball){
+    // метаем пойманный фаербол по вектору броска. Вялый бросок — просто роняем вправо
+    const D = CFG.dragon, fb = heldFireball;
+    let vx = mouse.vx, vy = mouse.vy;
+    if(Math.hypot(vx, vy) < D.minReturnSpeed){ vx = 160; vy = -50; }
+    fb.vx = vx; fb.vy = vy; fb.hostile = false; fb.held = false; fb.t = 0;
+    heldFireball = null;
+    cv.classList.remove('grabbing');
+    sfx.throw();
+    return;
+  }
   if(heldBoulder){
     // метаем отобранный валун по вектору броска (вялый бросок — просто роняем)
     const B = CFG.spells.boulder;
@@ -1589,6 +1850,13 @@ function update(dt){
 
   // непрерывный поток врагов (см. CFG.stream): со временем чаще и злее, без пауз
   gameTime += dt;
+  // жаровни на крыше разгораются на 2-й минуте — раньше огня нет (см. CFG.fire.litAt)
+  if(!braziersLit && gameTime >= CFG.fire.litAt){
+    braziersLit = true;
+    for(const bz of BRAZIERS) emitFireParticles(bz.x, bz.y, 14, 1);
+    shake = Math.max(shake, 6);
+    if(tutorialTryMessage('brazier', CFG.tutorial.brazierTitle, CFG.tutorial.brazierSub, 'click')) msgHi = null;
+  }
   // уровень угрозы для HUD
   const th = Math.floor(gameTime / CFG.stream.threatEvery) + 1;
   if(th !== threat){ threat = th; threatEl.textContent = threat; }
@@ -1598,16 +1866,8 @@ function update(dt){
     spawnDemon(pickStreamType());
     spawnTimer = curSpawnEvery() * rnd(.8, 1.2);
   }
-  // циклоп — мини-босс, спавнится НЕЗАВИСИМО по своему таймеру (если есть место)
-  cyclopsTimer -= dt;
-  if(cyclopsTimer <= 0){
-    if(cyclopes.length < CFG.cyclops.maxAlive){
-      spawnCyclops();
-      cyclopsTimer = CFG.stream.cyclopsEvery * rnd(.85, 1.15);
-    } else {
-      cyclopsTimer = 3; // место занято — проверим чуть позже
-    }
-  }
+  // боссы выходят последовательно, каждый по одному разу (см. updateBosses)
+  updateBosses(dt);
 
   // первый моб вышел — запускаем обучение и замораживаем мир до его захвата
   if(tutorialOnFirstDemon(demons)) return;
@@ -1714,7 +1974,7 @@ function update(dt){
         const dEye = Math.hypot(d.x+s/2-(c.x+CYC_EYE.x), d.y+s/2-(c.y+CYC_EYE.y));
         if(dEye < CYC_EYE.r + s*0.48){
           const eyeSp = eyeImpactSpeed(d, d.swing);
-          hitCyclops(c, eyeDamageFromDemon(d, eyeSp));
+          hitCyclops(c, eyeDamageFromDemon(d, eyeSp), burning(d));
           hurt(d, 1, d.swing);          // сам моб получает 1 от удара о глаз
           if(demons.includes(d)){
             // выжил — выпадает из рук и падает
@@ -1842,7 +2102,7 @@ function update(dt){
         const dEye = Math.hypot(d.x+s/2-(c.x+CYC_EYE.x), d.y+s/2-(c.y+CYC_EYE.y));
         if(d.armed && !d.noEyeDmg && dEye < CYC_EYE.r + s*0.48 && eyeSp >= SPD_LIGHT){
           const dmg = eyeDamageFromDemon(d, eyeSp);
-          hitCyclops(c, dmg);
+          hitCyclops(c, dmg, burning(d));
           d.armed = false; d.noEyeDmg = false; // бросок «разряжен» — второй раз глаз не бьёт
           hurt(d, 1, sp3);
           break;
@@ -2041,6 +2301,7 @@ function update(dt){
   for(const c of [...cyclopes]){
     c.t += dt;
     if(c.eyeFlash > 0) c.eyeFlash -= dt;
+    if(c.visorFlash > 0) c.visorFlash -= dt;
     if(!updateCyclopsBurn(c, dt)) continue;
     if(c.freeze > 0){ c.freeze -= dt; } // замер от порыва ветра
     else if(c.state === 'walk'){
@@ -2066,6 +2327,9 @@ function update(dt){
       }
     }
   }
+
+  updateDragon(dt);
+  updateFireballs(dt);
 
   for(const p of [...particles]){
     p.vy += GRAV*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt;
@@ -2206,6 +2470,8 @@ function draw(){
   // — лучи света из-за облаков, ложатся на замок (мобы ходят перед ними) —
   drawGodRays();
 
+  drawDragon();
+
   for(const c of cyclopes){
     // тень
     cx.globalAlpha = .25; cx.fillStyle = '#000';
@@ -2230,6 +2496,8 @@ function draw(){
     }
     cx.restore();
     if(burning(c)) drawEntityFire(c.x, c.y, CYC_W, CYC_H, 1.4);
+    // деревянное забрало 2-го босса — закрывает глаз, пока цело
+    if(c.visor > 0) drawVisor(c);
     // полоска ХП
     cx.fillStyle = 'rgba(26,22,38,.8)';
     cx.fillRect(c.x, c.y-16, CYC_W, 7);
@@ -2331,6 +2599,9 @@ function draw(){
     cx.globalAlpha = 1; cx.fillStyle = '#d9b3ff';
     cx.beginPath(); cx.arc(sh.x, sh.y, 5, 0, Math.PI*2); cx.fill();
   }
+
+  // фаерболы дракона (и пойманный в руке — он остаётся в этом же массиве)
+  drawFireballs();
 
   // струи торнадо — короткие чёрточки по касательной к спирали (закрученный вихрь)
   cx.lineCap = 'round';
@@ -2643,6 +2914,7 @@ function drawMountain(){
 }
 
 function drawBrazier(){
+  if(!braziersLit) return; // жаровни загораются только на 2-й минуте
   const t = last * 0.001;
   const fw = FIRE.brazierW;
   cx.save();
@@ -2663,6 +2935,133 @@ function drawBrazier(){
     }
   }
   cx.globalCompositeOperation = 'source-over';
+  cx.restore();
+}
+
+// деревянное забрало 2-го босса — доски с железными скобами поверх глаза
+function drawVisor(c){
+  const ex = c.x + CYC_EYE.x, ey = c.y + CYC_EYE.y;
+  const pw = CYC_EYE.r * 3.0, ph = CYC_EYE.r * 3.8;
+  cx.save();
+  if(c.visorFlash > 0) cx.translate(rnd(-2, 2), rnd(-1, 1)); // дрожит при ударе
+  cx.fillStyle = '#6e4a2a';
+  cx.fillRect(ex - pw/2, ey - ph/2, pw, ph);
+  cx.fillStyle = '#5a3a20'; // прожилки между досками
+  for(let i = 1; i < 3; i++) cx.fillRect(ex - pw/2, ey - ph/2 + i*ph/3, pw, 2);
+  cx.fillStyle = '#3a3a44'; // железные скобы по краям
+  cx.fillRect(ex - pw/2, ey - ph/2, 3, ph);
+  cx.fillRect(ex + pw/2 - 3, ey - ph/2, 3, ph);
+  // трещины по мере разрушения
+  const dmgTaken = CFG.bosses.visorHits - c.visor;
+  if(dmgTaken > 0){
+    cx.strokeStyle = '#2a1c10'; cx.lineWidth = 1.5;
+    cx.beginPath(); cx.moveTo(ex - pw/3, ey - ph/2); cx.lineTo(ex + 2, ey + ph/4); cx.stroke();
+    if(dmgTaken > 1){ cx.beginPath(); cx.moveTo(ex + pw/3, ey - ph/3); cx.lineTo(ex - 2, ey + ph/3); cx.stroke(); }
+  }
+  if(c.visorFlash > 0){
+    cx.globalAlpha = Math.min(1, c.visorFlash*3) * 0.6;
+    cx.fillStyle = '#ffcf3a';
+    cx.fillRect(ex - pw/2, ey - ph/2, pw, ph);
+    cx.globalAlpha = 1;
+  }
+  cx.restore();
+}
+
+// дракон (3-й босс) — рисуется процедурно (контуры). Стоит у правого края, мордой влево.
+function drawDragon(){
+  if(!dragon) return;
+  const dr = dragon, D = CFG.dragon;
+  const bx = dr.x, by = dr.y, w = DRG_W, h = DRG_H, t = last*0.001;
+  const breath = Math.sin(t*1.6) * 3;
+  // мигание в ярости
+  const alpha = dr.enrage ? (0.5 + 0.5*Math.abs(Math.sin(dr.blink*9))) : 1;
+  const mid = '#46314f', dark = '#2e1d33', belly = '#caa86a', wing = '#5a3a63', wingEdge = '#2a1830';
+  // тень на земле
+  cx.globalAlpha = 0.25 * alpha; cx.fillStyle = '#000';
+  cx.beginPath(); cx.ellipse(bx + w*0.55, GROUND_Y + 4, w*0.42, 9, 0, 0, Math.PI*2); cx.fill();
+  cx.globalAlpha = 1;
+  cx.save();
+  cx.translate(0, breath);
+  cx.globalAlpha = alpha;
+  // хвост — изгиб вправо-вверх
+  cx.strokeStyle = mid; cx.lineCap = 'round';
+  cx.lineWidth = h*0.16;
+  cx.beginPath(); cx.moveTo(bx + w*0.7, by + h*0.6);
+  cx.quadraticCurveTo(bx + w*1.02, by + h*0.55, bx + w*0.95, by + h*0.2); cx.stroke();
+  cx.lineWidth = h*0.06;
+  cx.beginPath(); cx.moveTo(bx + w*0.95, by + h*0.2);
+  cx.quadraticCurveTo(bx + w*0.99, by + h*0.04, bx + w*0.88, by); cx.stroke();
+  // задняя лапа
+  cx.fillStyle = dark;
+  cx.beginPath(); cx.ellipse(bx + w*0.72, by + h*0.82, w*0.1, h*0.16, 0, 0, Math.PI*2); cx.fill();
+  // крыло — большая перепонка с зубцами
+  cx.fillStyle = wing;
+  cx.beginPath();
+  cx.moveTo(bx + w*0.55, by + h*0.4);
+  cx.lineTo(bx + w*0.95, by + h*0.02);
+  cx.lineTo(bx + w*0.78, by + h*0.3);
+  cx.lineTo(bx + w*0.99, by + h*0.28);
+  cx.lineTo(bx + w*0.8, by + h*0.48);
+  cx.lineTo(bx + w*0.93, by + h*0.54);
+  cx.closePath(); cx.fill();
+  cx.strokeStyle = wingEdge; cx.lineWidth = 2; cx.stroke();
+  // тело
+  cx.fillStyle = mid;
+  cx.beginPath(); cx.ellipse(bx + w*0.56, by + h*0.58, w*0.3, h*0.3, 0, 0, Math.PI*2); cx.fill();
+  cx.fillStyle = belly;
+  cx.beginPath(); cx.ellipse(bx + w*0.5, by + h*0.72, w*0.2, h*0.15, 0, 0, Math.PI*2); cx.fill();
+  // передняя лапа
+  cx.fillStyle = dark;
+  cx.beginPath(); cx.ellipse(bx + w*0.42, by + h*0.85, w*0.09, h*0.14, 0, 0, Math.PI*2); cx.fill();
+  // шея к голове
+  cx.strokeStyle = mid; cx.lineWidth = h*0.18;
+  cx.beginPath(); cx.moveTo(bx + w*0.45, by + h*0.4);
+  cx.quadraticCurveTo(bx + w*0.28, by + h*0.42, bx + w*0.2, by + h*0.5); cx.stroke();
+  // голова
+  cx.fillStyle = mid;
+  cx.beginPath(); cx.ellipse(bx + w*0.17, by + h*0.48, w*0.12, h*0.1, 0, 0, Math.PI*2); cx.fill();
+  // морда вытянута влево
+  cx.beginPath();
+  cx.moveTo(bx + w*0.16, by + h*0.42);
+  cx.lineTo(bx + w*0.02, by + h*0.5);
+  cx.lineTo(bx + w*0.16, by + h*0.56);
+  cx.closePath(); cx.fill();
+  // рога назад
+  cx.strokeStyle = '#d9b380'; cx.lineWidth = 4;
+  cx.beginPath(); cx.moveTo(bx + w*0.22, by + h*0.4); cx.lineTo(bx + w*0.31, by + h*0.27); cx.stroke();
+  cx.beginPath(); cx.moveTo(bx + w*0.2, by + h*0.42); cx.lineTo(bx + w*0.26, by + h*0.3); cx.stroke();
+  // раскалённая пасть (точка вылета фаербола)
+  cx.save(); cx.globalCompositeOperation = 'lighter';
+  const glow = 0.5 + 0.4*Math.sin(t*6);
+  cx.globalAlpha = (0.5 + glow*0.5) * alpha; cx.fillStyle = '#ff6a1a';
+  cx.beginPath(); cx.arc(bx + w*0.07, by + h*0.5, 8, 0, Math.PI*2); cx.fill();
+  cx.restore();
+  // глаз
+  cx.fillStyle = dr.eyeFlash > 0 ? '#fff' : '#ffd000';
+  cx.beginPath(); cx.arc(bx + w*0.19, by + h*0.45, dr.eyeFlash > 0 ? 5 : 3.5, 0, Math.PI*2); cx.fill();
+  cx.restore();
+  // полоска ХП над драконом
+  const bw = w*0.7, bxx = bx + w*0.15;
+  cx.fillStyle = 'rgba(26,22,38,.8)'; cx.fillRect(bxx, by - 6, bw, 8);
+  cx.fillStyle = dr.enrage ? '#ff3030' : '#e85b21';
+  cx.fillRect(bxx + 1, by - 5, (bw - 2)*Math.max(0, dr.hp/D.hp), 6);
+}
+
+// фаерболы — светящиеся огненные сгустки (ядро + два ореола), режим 'lighter'
+function drawFireballs(){
+  const t = last*0.001;
+  cx.save();
+  cx.globalCompositeOperation = 'lighter';
+  for(const fb of fireballs){
+    const r = fb.r;
+    cx.globalAlpha = 0.5; cx.fillStyle = '#e85b21';
+    cx.beginPath(); cx.arc(fb.x, fb.y, r*(1.1 + 0.15*Math.sin(t*12 + fb.x)), 0, Math.PI*2); cx.fill();
+    cx.globalAlpha = 0.8; cx.fillStyle = '#ffcf3a';
+    cx.beginPath(); cx.arc(fb.x, fb.y, r*0.85, 0, Math.PI*2); cx.fill();
+    cx.globalAlpha = 1; cx.fillStyle = '#fff2a8';
+    cx.beginPath(); cx.arc(fb.x, fb.y, r*0.5, 0, Math.PI*2); cx.fill();
+  }
+  cx.globalAlpha = 1;
   cx.restore();
 }
 
@@ -2791,6 +3190,10 @@ muteBtn.addEventListener('click', () => {
 function start({ skipTutorial = false, skipDialogue = false } = {}){
   demons=[]; puddles=[]; particles=[]; cyclopes=[]; shockwaves=[];
   bolts=[]; boulders=[]; windStreaks=[]; shots=[]; tornadoes=[]; heldBoulder=null; skyFlash=0;
+  // боссы и дракон
+  fireballs=[]; pendingFB=[]; heldFireball=null; dragon=null; braziersLit=false;
+  boss1Spawned=false; boss2Spawned=false; boss2Dead=false;
+  dragonSpawned=false; dragonTimer=0; won=false;
   swirls=[]; nextSwirl = rnd(CFG.tornado.swirlMin, CFG.tornado.swirlMax);
   for(const c of clouds){ c.charge = null; }
   nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
@@ -2848,7 +3251,7 @@ function gameOver(){
     return;
   }
   logSession();
-  running = false; held = null; heldBoulder = null;
+  running = false; held = null; heldBoulder = null; heldFireball = null;
   choosing = false; pendingLevels = 0;
   shake = 0; // игра остановилась — гасим тряску, иначе экран дёргается на экране поражения
   music.menu(); // экран конца игры — это меню: игровая музыка гаснет, меню-трек возвращается
