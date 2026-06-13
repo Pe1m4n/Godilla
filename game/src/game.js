@@ -66,9 +66,9 @@ initDialogue({ cx, W, H, FONT });
 // ── облака: плывут на фоне (x,y в дизайн-координатах, spd — px/сек, минус = влево) ──
 // charge: null | 'storm' — заряженную грозовую тучу можно кликнуть (см. triggerCloud)
 const clouds = [
-  { key:'cloud1', x: 240, y: 64,  spd: -27, charge:null },
-  { key:'cloud2', x: 560, y: 120, spd: -18, charge:null },
-  { key:'cloud3', x: 830, y: 52,  spd: -36, charge:null },
+  { key:'cloud1', x: 240, y: 64,  spd: -34, charge:null },
+  { key:'cloud2', x: 560, y: 120, spd: -23, charge:null },
+  { key:'cloud3', x: 830, y: 52,  spd: -45, charge:null },
 ];
 let nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
 const cloudW = c => art[c.key] ? art[c.key].width  : 210;
@@ -1338,7 +1338,8 @@ function pickStreamType(){
 function curSpawnEvery(){
   const S = CFG.stream;
   const k = Math.min(1, gameTime / S.rampTime);
-  return S.startEvery + (S.minEvery - S.startEvery) * k;
+  const base = S.startEvery + (S.minEvery - S.startEvery) * k;
+  return boss2Spawned ? base * S.postVisorSpawnMul : base;
 }
 
 // ── прокачка ───────────────────────────────────────────────────────
@@ -1624,7 +1625,7 @@ function chainLightning(x, y){
   const C = CFG.skills.chain, L = CFG.spells.lightning;
   const radius = C.radius + CFG.skills.chainJump.add * sk('chainJump');
   const hit = new Set();
-  let px = x, py = y, hops = sk('chain') * 2;
+  let px = x, py = y, hops = C.hops * sk('chain');
   while(hops-- > 0){
     let best = null, bd = radius;
     for(const o of demons){
