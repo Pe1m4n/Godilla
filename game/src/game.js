@@ -437,7 +437,7 @@ function fireImpactDamage(base, d, wasArmed, sp){
 }
 
 function fireBurst(x, y, src){
-  if(!src.fireBurstReady) return;
+  if(!burning(src)) return;
   src.fireBurstReady = false;
   emitFireParticles(x, y - 4, FIRE.spreadParticles, 1.15);
   shockwaves.push({x, y, r: 10, max: FIRE.spreadRadius, life: .38});
@@ -1241,6 +1241,7 @@ function update(dt){
           const dmg = impactDamage(d.swing);
           if(dmg > 0){
             slamSmaller(d);        // ударная волна по меньшим (до урона себе — d ещё жив)
+            fireBurst(d.x + s/2, GROUND_Y, d);
             hurt(d, dmg, d.swing);
             d.swing = 0;
           }
