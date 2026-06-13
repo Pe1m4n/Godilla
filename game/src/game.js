@@ -101,7 +101,10 @@ function updateClouds(dt){
 function triggerCloud(c){
   const cxp = c.x + cloudW(c)/2, cyp = c.y + cloudH(c)*0.6;
   stats.lightning++;
-  castLightning(cxp, cyp, 0, 1);
+  const n = 1 + sk('stormBurst');   // «Шквал»: туча бьёт несколькими молниями веером
+  for(let i = 0; i < n; i++){
+    castLightning(cxp + (i - (n-1)/2) * 42, cyp, 0, 1);
+  }
   c.charge = null;
 }
 
@@ -249,7 +252,7 @@ function bloodSprite(size, col){
 
 // ── состояние ──────────────────────────────────────────────────────
 let demons = [], puddles = [], particles = [], cyclopes = [], shockwaves = [];
-let bolts = [], boulders = [], windStreaks = [], shots = [];
+let bolts = [], boulders = [], windStreaks = [], shots = [], tornadoes = [];
 let heldBoulder = null; // отобранный у носильщика валун в руке: {x, y}
 // данные законсервированной панели заклинаний (см. drawSpellUI — сейчас не вызывается)
 let spellSlots = [{id:'lightning', cd:0}, {id:'boulder', cd:0}, {id:'wind', cd:0}];
@@ -263,11 +266,14 @@ let gameTime = 0, spawnTimer = 0, cyclopsTimer = 0, threat = 1;
 let hugeSeen = false; // появился ли уже первый «huge» — по нему музыка переходит в боевую
 let player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
 let pendingLevels = 0, choosing = false;
+let killSinceRepair = 0;   // счётчик для перка «Кладка из костей»
+let usedSecondWind = false; // перк «Второе дыхание» — одноразовое спасение врат
 // ── статистика сессии (для лога прохождений, см. logSession) ──
 function newStats(){ return { kills:{}, killsTotal:0, lightning:0, tornado:0, gateShots:0, cityBreaches:0 }; }
 let stats = newStats();
 let running = false, held = null;
 const sk = id => player.skills[id] || 0; // уровень скилла игрока
+const enemySlow = () => 1 - CFG.skills.molasses.mult * sk('molasses'); // «Трясина»: множитель скорости врагов
 let mouse = {x:0,y:0,px:0,py:0,vx:0,vy:0};
 let shake = 0;
 let skyFlash = 0; // зарево на небо в момент удара молнии (1 → 0)
@@ -395,7 +401,7 @@ function eyeImpactSpeed(d, speed){
 function eyeDamageFromDemon(d, speed){
   const T = TYPES[d.type];
   const raw = Math.ceil((Math.max(1, d.hp) * speed) / CFG.cyclops.eyeDmgDiv);
-  return Math.max(1, Math.min(T.hp, raw)) + sk('throwDmg') + sk('eyePower');
+  return Math.max(1, Math.min(T.hp, raw)) + sk('throwDmg');
 }
 
 function overlapsTowerRoof(d, s){
@@ -432,7 +438,7 @@ function emitFireParticles(x, y, n, power = 1){
 
 // «Поджигатель» (pyro): дольше горят и шире распространяется огонь
 const burnDuration = () => FIRE.duration * (1 + CFG.skills.pyro.mult * sk('pyro'));
-const fireSpreadR  = () => FIRE.spreadRadius * (1 + CFG.skills.pyro.mult * sk('pyro'));
+const fireSpreadR  = () => FIRE.spreadRadius * (1 + CFG.skills.inferno.mult * sk('inferno')); // «Преисподняя»
 
 function igniteDemon(d, source = 'spread'){
   if(!demons.includes(d) || d.state === 'offscreen' || d.state === 'burrow') return;
@@ -480,7 +486,7 @@ function updateDemonBurn(d, dt){
   }
   while(d.burnTick <= 0 && demons.includes(d)){
     d.burnTick += FIRE.tickEvery;
-    hurt(d, FIRE.tickDmg, 220);
+    hurt(d, FIRE.tickDmg + sk('wildfire'), 220);
   }
   if(!demons.includes(d)) return false;
   if(d.burnT <= 0){
@@ -510,7 +516,7 @@ function updateCyclopsBurn(c, dt){
   }
   while(c.burnTick <= 0 && cyclopes.includes(c)){
     c.burnTick += FIRE.tickEvery;
-    hitCyclops(c, FIRE.tickDmg);
+    hitCyclops(c, FIRE.tickDmg + sk('wildfire'));
   }
   if(!cyclopes.includes(c)) return false;
   if(c.burnT <= 0) c.burnT = 0;
@@ -531,7 +537,7 @@ function overlapsBrazier(d, s){
 }
 
 function fireImpactDamage(base, d, wasArmed, sp){
-  return wasArmed && burning(d) && sp >= SPD_LIGHT ? base + FIRE.impactBonus : base;
+  return wasArmed && burning(d) && sp >= SPD_LIGHT ? base + FIRE.impactBonus + sk('emberSmash') : base;
 }
 
 function fireBurst(x, y, src){
@@ -559,13 +565,17 @@ function slamSmaller(d){
   const radius = S.radius + CFG.skills.slamWide.add * lvl;  // «Сейсмоудар»: шире
   const dmg = S.dmg + (lvl >= 2 ? 1 : 0);                   // и сильнее с 2-го уровня
   const ds = sizeOf(d);
+  // «Тяжёлый молот»: задевает и равных по размеру, не только мельче
+  const cutoff = sk('slamHard') > 0 ? ds + 0.5 : ds;
   const cx0 = d.x + ds/2;
   let hit = false;
   for(const o of [...demons]){
     if(o === d || o.state==='held' || o.state==='offscreen' || o.state==='burrow' || o.flash>0 || !demons.includes(o)) continue;
-    if(sizeOf(o) >= ds) continue; // достаётся только меньшим
+    if(sizeOf(o) >= cutoff) continue; // достаётся только тем, кто меньше (с «Молотом» — и равным)
     const os = sizeOf(o);
     if(Math.hypot(o.x+os/2 - cx0, o.y+os/2 - GROUND_Y) <= radius){
+      // «Пепелище»: удар горящим мобом поджигает задетых волной
+      if(sk('ashSlam') > 0 && burning(d)) igniteDemon(o, 'spread');
       hurt(o, dmg, 400);
       hit = true;
     }
@@ -597,6 +607,23 @@ function splat(d, sp){
   sfx.splat();
   shake = Math.min(TYPES[d.type].shakeSplat, 6 + sp/120);
   stats.kills[d.type] = (stats.kills[d.type] || 0) + 1; stats.killsTotal++;
+  // «Кладка из костей»: каждые every убийств чинят врата
+  if(sk('repairKill') > 0 && ++killSinceRepair >= CFG.skills.repairKill.every){
+    killSinceRepair = 0;
+    hp = Math.min(100, hp + CFG.skills.repairKill.amount * sk('repairKill'));
+    hpFill.style.width = hp + '%';
+  }
+  // «Заразное пламя»: горящий враг при гибели вспыхивает и поджигает соседей
+  if(sk('wildSpread') > 0 && burning(d)){
+    const wr = CFG.skills.wildSpread.radius * sk('wildSpread');
+    const sw = sizeOf(d), wx = d.x + sw/2, wy = d.y + sw/2;
+    emitFireParticles(wx, wy, 16, 1);
+    for(const o of [...demons]){
+      if(o === d || o.state==='held' || o.state==='offscreen' || o.state==='burrow' || !demons.includes(o)) continue;
+      const os = sizeOf(o);
+      if(Math.hypot(o.x+os/2 - wx, o.y+os/2 - wy) <= wr) igniteDemon(o, 'spread');
+    }
+  }
   const pts = TYPES[d.type].score;
   score += pts; scoreEl.textContent = score;
   gainXP(pts);
@@ -906,50 +933,78 @@ function pickSkill(id){
 
 // Торнадо в точке centerX: втягивает орду к центру и подбрасывает вверх.
 // Струи рождаются спиралью вокруг центра (см. отрисовку windStreaks).
+// порция спиральных струй вокруг центра вихря (визуал)
+function spawnVortexStreaks(x, n){
+  for(let i = 0; i < n; i++){
+    windStreaks.push({
+      cx: x, baseY: GROUND_Y - rnd(0, 12),
+      ang: rnd(0, Math.PI*2),
+      rad: rnd(30, 230),
+      angV: rnd(5.5, 9),      // все в одну сторону — единый закрут
+      radV: -rnd(45, 95),     // втягивание внутрь
+      riseV: rnd(120, 270),   // подъём вверх
+      t: 0, life: rnd(.5, 1.0),
+    });
+  }
+}
+
+// клик по вихрю ставит торнадо: оно «висит» duration секунд (см. updateTornadoes),
+// всё это время втягивая орду к центру и держа её в воздухе
 function triggerTornado(centerX){
   const T = CFG.tornado;
   stats.tornado++;
   sfx.wind();
   shake = Math.max(shake, 7);
   const cxC = Math.max(MOUNTAIN_X + 20, Math.min(W - 20, centerX));
-  // «Большая воронка»: шире зона действия
-  const reach = T.radius * (1 + CFG.skills.tornadoWide.mult * sk('tornadoWide'));
-  // спиральные струи у земли вокруг центра вихря
-  for(let i = 0; i < 48; i++){
-    windStreaks.push({
-      cx: cxC, baseY: GROUND_Y - rnd(0, 12),
-      ang: rnd(0, Math.PI*2),
-      rad: rnd(30, 230),
-      angV: rnd(5.5, 9),      // все в одну сторону — единый закрут
-      radV: -rnd(45, 95),     // втягивание внутрь
-      riseV: rnd(120, 270),   // подъём вверх
-      t: 0, life: rnd(.6, 1.2),
-    });
-  }
-  for(const d of demons){
-    if(d.state === 'held' || d.state === 'offscreen' || d.state === 'burrow') continue;
-    // действует только в зоне под завихрением (широкой, но не вся карта)
-    if(Math.abs((d.x + sizeOf(d)/2) - cxC) > reach) continue;
-    if(TYPES[d.type].liftable === false){
-      // неподъёмные не взлетают — просто замирают
-      d.state = 'stun'; d.stun = Math.max(d.stun, CFG.spells.wind.stun);
-      d.vx = d.vy = 0; d.rot = 0;
-      continue;
-    }
-    d.state = 'fly';
-    // лёгких подбрасывает выше тяжёлых
-    const w = (d.type==='small'||d.type==='dog') ? 1.4
-            : (d.type==='huge') ? 0.6 : 0.85;
-    const dir = (cxC - (d.x + sizeOf(d)/2)) >= 0 ? 1 : -1;
-    d.vx = dir * T.pull * w * rnd(.6, 1.0);     // втягивает к центру вихря
-    d.vy = -T.lift * w * rnd(.85, 1.15);        // вверх — сильно
-    d.rotV = rnd(-8, 8);
-    // заряжаем как при броске рукой: впечатавшись в землю на скорости — получат урон
-    d.armed = true; d.noEyeDmg = true; d.hitsLeft = sk('collide'); d.noDmg = false; d.grounded = false;
-  }
+  tornadoes.push({
+    x: cxC,
+    reach:   T.radius * (1 + CFG.skills.tornadoWide.mult * sk('tornadoWide')), // «Большая воронка»
+    liftMul: 1 + CFG.skills.tornadoLift.mult * sk('tornadoLift'),              // «Мощный вихрь»
+    pullMul: 1 + CFG.skills.gust.mult * sk('gust'),                            // «Порыв»
+    life: T.duration + CFG.skills.tornadoDur.add * sk('tornadoDur'),          // «Долгая воронка»
+    dmgT: CFG.skills.cyclone.every,
+  });
+  spawnVortexStreaks(cxC, 40); // начальный «вдох»
   for(const c of cyclopes){
     c.freeze = Math.max(c.freeze, CFG.spells.wind.stun);
     floatText(c.x+CYC_W/2, c.y-24, 'ЗАМЕР!', '#1a1626', 1);
+  }
+}
+
+// каждый кадр: пока торнадо живо — крутит струи, втягивает и держит орду в воздухе
+function updateTornadoes(dt){
+  const T = CFG.tornado;
+  for(const tr of [...tornadoes]){
+    tr.life -= dt;
+    spawnVortexStreaks(tr.x, 5);
+    // «Смерч»: периодический урон пойманным
+    let dmgNow = false;
+    if(sk('cyclone') > 0){ tr.dmgT -= dt; if(tr.dmgT <= 0){ dmgNow = true; tr.dmgT = CFG.skills.cyclone.every; } }
+    const caught = [];
+    let anyBurning = false;
+    for(const d of [...demons]){
+      if(d === held || d.state === 'held' || d.state === 'offscreen' || d.state === 'burrow') continue;
+      if(Math.abs((d.x + sizeOf(d)/2) - tr.x) > tr.reach) continue;
+      if(TYPES[d.type].liftable === false){
+        d.state = 'stun'; d.stun = Math.max(d.stun, 0.25); d.vx = d.vy = 0; d.rot = 0;
+        continue;
+      }
+      d.state = 'fly';
+      const w = (d.type==='small'||d.type==='dog') ? 1.4 : (d.type==='huge') ? 0.6 : 0.85;
+      const dir = (tr.x - (d.x + sizeOf(d)/2)) >= 0 ? 1 : -1;
+      d.vx = dir * T.pull * w * tr.pullMul * 0.5;     // втягивает к центру
+      const up = -T.lift * w * tr.liftMul * 0.7;       // держим в воздухе, пока вихрь жив
+      if(d.vy > up * 0.5) d.vy = up;
+      if(!d.rotV) d.rotV = rnd(-8, 8);
+      d.armed = true; d.noEyeDmg = true; d.hitsLeft = sk('collide'); d.noDmg = false; d.grounded = false;
+      if(dmgNow){ hurt(d, CFG.skills.cyclone.dmg, 300); }
+      if(demons.includes(d)){ caught.push(d); if(burning(d)) anyBurning = true; }
+    }
+    // «Огненный смерч»: если в воронке есть горящий — поджигаем всю пойманную орду
+    if(sk('fireVortex') > 0 && anyBurning){
+      for(const d of caught) igniteDemon(d, 'spread');
+    }
+    if(tr.life <= 0) tornadoes.splice(tornadoes.indexOf(tr), 1);
   }
 }
 
@@ -1009,11 +1064,22 @@ function castLightning(sx, sy, vx, vy){
   ex = Math.max(-40, Math.min(W+40, ex));
   bolts.push({ x0: sx, y0: sy, x1: ex, y1: ey, life: L.flash, max: L.flash });
   // мгновенный сквозной урон по всей линии разряда
+  const pierceR = L.pierceR + CFG.skills.stormWide.add * sk('stormWide');     // «Широкий разряд»
+  const lineDmg = L.pierceDmg + CFG.skills.overcharge.add * sk('overcharge'); // «Перегруз»
   for(const o of [...demons]){
     if(o.state === 'held' || o.state === 'offscreen' || o.state === 'burrow' || o.flash > 0 || !demons.includes(o)) continue;
     const os = sizeOf(o);
-    if(distToSeg(o.x+os/2, o.y+os/2, sx, sy, ex, ey) < L.pierceR + os*0.4)
-      hurt(o, L.pierceDmg + CFG.skills.overcharge.add * sk('overcharge'), 800);
+    if(distToSeg(o.x+os/2, o.y+os/2, sx, sy, ex, ey) < pierceR + os*0.4){
+      let dmg = lineDmg;
+      if(burning(o)) dmg += CFG.skills.stormConduit.add * sk('stormConduit'); // «Громоотвод»: по горящим
+      if(o.state === 'fly') dmg += CFG.skills.skyStrike.add * sk('skyStrike');  // «Гроза с небес»: по парящим
+      hurt(o, dmg, 800);
+      // «Оглушающий разряд»: выживший на линии замирает
+      if(sk('boltStun') > 0 && demons.includes(o) && o.state !== 'burrow'){
+        o.state = 'stun'; o.stun = Math.max(o.stun || 0, CFG.skills.boltStun.dur * sk('boltStun'));
+        o.vx = o.vy = 0;
+      }
+    }
   }
   for(const c of [...cyclopes]){
     if(distToSeg(c.x+CYC_EYE.x, c.y+CYC_EYE.y, sx, sy, ex, ey) < CYC_EYE.r + L.pierceR)
@@ -1030,6 +1096,29 @@ function castLightning(sx, sy, vx, vy){
   shake = Math.max(shake, 11);
   sfx.zap();
   boltBoom({ x: ex });
+  if(sk('chain') > 0) chainLightning(ex, ey);   // «Цепная молния»
+}
+
+// «Цепная молния»: от точки удара разряд перескакивает на ближайших врагов
+function chainLightning(x, y){
+  const C = CFG.skills.chain, L = CFG.spells.lightning;
+  const radius = C.radius + CFG.skills.chainJump.add * sk('chainJump');
+  const hit = new Set();
+  let px = x, py = y, hops = sk('chain') * 2;
+  while(hops-- > 0){
+    let best = null, bd = radius;
+    for(const o of demons){
+      if(hit.has(o) || o.state==='held' || o.state==='offscreen' || o.state==='burrow' || !demons.includes(o)) continue;
+      const os = sizeOf(o), dd = Math.hypot(o.x+os/2 - px, o.y+os/2 - py);
+      if(dd < bd){ best = o; bd = dd; }
+    }
+    if(!best) break;
+    hit.add(best);
+    const os = sizeOf(best), bx = best.x+os/2, by = best.y+os/2;
+    bolts.push({ x0: px, y0: py, x1: bx, y1: by, life: L.flash, max: L.flash });
+    px = bx; py = by;
+    hurt(best, C.dmg, 600);
+  }
 }
 
 // взрыв молнии в точке удара о землю
@@ -1037,7 +1126,9 @@ function boltBoom(b){
   const L = CFG.spells.lightning;
   sfx.boom();
   shake = Math.max(shake, 9);
-  shockwaves.push({x: b.x, y: GROUND_Y, r: 10, max: L.boomR, life: .4});
+  const boomR = L.boomR * (1 + CFG.skills.boltWide.mult * sk('boltWide'));   // «Раскат»
+  const boomDmg = L.boomDmg + CFG.skills.boltForce.add * sk('boltForce');    // «Громовой удар»
+  shockwaves.push({x: b.x, y: GROUND_Y, r: 10, max: boomR, life: .4});
   for(let i = 0; i < 18; i++){
     particles.push({x:b.x, y:GROUND_Y-4, vx:rnd(-260,260), vy:rnd(-420,-60),
       col: i%2 ? '#7fb4ff' : '#f4faff', life:rnd(.3,.7), size:rnd(2,4)});
@@ -1045,7 +1136,7 @@ function boltBoom(b){
   for(const o of [...demons]){
     if(o.state === 'held' || o.state === 'offscreen' || o.state === 'burrow' || !demons.includes(o)) continue;
     const os = sizeOf(o);
-    if(Math.hypot(o.x+os/2 - b.x, o.y+os/2 - GROUND_Y) <= L.boomR) hurt(o, L.boomDmg, 600);
+    if(Math.hypot(o.x+os/2 - b.x, o.y+os/2 - GROUND_Y) <= boomR) hurt(o, boomDmg, 600);
   }
 }
 
@@ -1262,8 +1353,8 @@ function onUp(){
       return;
     }
     held.state='fly';
-    // тяжёлых надо швырять быстрее: скорость броска гасится весом (+ скилл «Могучий замах»)
-    const tf = T.throwF * (1 + CFG.skills.strongArm.mult * sk('strongArm'));
+    // скорость броска гасится весом моба
+    const tf = T.throwF;
     held.vx = vx * tf; held.vy = vy * tf;
     held.rotV = (Math.abs(held.vx)+Math.abs(held.vy)) * CFG.throwing.spin * (held.vx<0?-1:1) + rnd(-1,1);
     // бросок вдоль земли, когда моб уже стоит на полу: чуть подбрасываем,
@@ -1451,7 +1542,7 @@ function update(dt){
     if(!updateDemonBurn(d, dt)) continue;
     if(d.state === 'burrow'){
       // роет под землёй — быстро и неуязвимо; на рубеже выныривает и идёт пешком
-      d.x -= TYPES[d.type].burrowSpeed * dt;
+      d.x -= TYPES[d.type].burrowSpeed * dt * enemySlow();
       d.y = GROUND_Y - s;
       if(d.x <= W * TYPES[d.type].emergeAt){
         d.state = 'walk';
@@ -1486,7 +1577,7 @@ function update(dt){
     }
     else if(d.state === 'walk'){
       const T2 = TYPES[d.type];
-      d.x -= d.speed * dt;
+      d.x -= d.speed * dt * enemySlow();   // «Трясина» замедляет
       if(T2.air){
         // парит; эрратик петляет по высоте и рыщет по горизонтали — трудно схватить
         if(T2.erratic){
@@ -1640,6 +1731,8 @@ function update(dt){
           const dmgOut  = impactDamage(rel) + sk('throwDmg');
           // ответный урон не больше макс. ХП жертвы: мелкий вернёт максимум 1
           const dmgBack = Math.min(TYPES[o.type].hp, dmgOut);
+          // «Огненный таран»: горящий снаряд поджигает жертву
+          if(sk('infernoThrow') > 0 && burning(d)) igniteDemon(o, 'spread');
           hurt(o, dmgOut, rel);
           if(demons.includes(o)){ // жертва выжила — отлетает (но сама уже не «заряжена»)
             o.state='fly'; o.vx = d.vx*0.7; o.vy = -170;
@@ -1829,6 +1922,9 @@ function update(dt){
     }
   }
 
+  // ── активные торнадо: держат орду в воздухе, пока живы ──
+  updateTornadoes(dt);
+
   // ── спиральные струи торнадо: вращаются вокруг центра, втягиваются и поднимаются ──
   for(const ws of [...windStreaks]){
     ws.t += dt; ws.life -= dt;
@@ -1860,7 +1956,7 @@ function update(dt){
     if(!updateCyclopsBurn(c, dt)) continue;
     if(c.freeze > 0){ c.freeze -= dt; } // замер от порыва ветра
     else if(c.state === 'walk'){
-      c.x -= CFG.cyclops.speed * dt;
+      c.x -= CFG.cyclops.speed * dt * enemySlow();
       c.step -= dt;
       if(c.step <= 0){ c.step = 0.8; shake = Math.max(shake, CFG.cyclops.shakeStep); sfx.thud(); }
       if(c.x < MOUNTAIN_X - 20){ c.state = 'pound'; c.poundT = 1; }
@@ -2548,7 +2644,7 @@ muteBtn.addEventListener('click', () => {
 // не запускается, обучение выключено на всю партию (тумблеры конфига игнорируются).
 function start(skipNarrative = false){
   demons=[]; puddles=[]; particles=[]; cyclopes=[]; shockwaves=[];
-  bolts=[]; boulders=[]; windStreaks=[]; shots=[]; heldBoulder=null; skyFlash=0;
+  bolts=[]; boulders=[]; windStreaks=[]; shots=[]; tornadoes=[]; heldBoulder=null; skyFlash=0;
   swirls=[]; nextSwirl = rnd(CFG.tornado.swirlMin, CFG.tornado.swirlMax);
   for(const c of clouds){ c.charge = null; }
   nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
@@ -2557,6 +2653,7 @@ function start(skipNarrative = false){
   hugeSeen=false;
   player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
   pendingLevels = 0; choosing = false;
+  killSinceRepair = 0; usedSecondWind = false;
   afterFirstPending = false; tutDemon = null; afterFirstTimer = 0; // второй диалог ворона ещё не показан
   stats = newStats();
   resetTutorial(skipNarrative ? false : CFG.tutorial.enabled);
@@ -2595,6 +2692,14 @@ function logSession(){
 }
 
 function gameOver(){
+  // «Второе дыхание»: один раз за партию врата не падают, а восстанавливаются
+  if(sk('secondWind') > 0 && !usedSecondWind){
+    usedSecondWind = true;
+    hp = CFG.skills.secondWind.to; hpFill.style.width = hp + '%';
+    floatText(MOUNTAIN_X, 200, 'ВТОРОЕ ДЫХАНИЕ!', '#2f6e3c', 1.6);
+    shake = Math.max(shake, 14);
+    return;
+  }
   logSession();
   running = false; held = null; heldBoulder = null;
   choosing = false; pendingLevels = 0;
