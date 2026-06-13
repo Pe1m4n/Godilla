@@ -282,8 +282,17 @@ const SWIRL_R = 30;     // радиус клика/иконки завихрен
 let score = 0, hp = 100;
 let gameTime = 0, spawnTimer = 0, cyclopsTimer = 0, threat = 1;
 let hugeSeen = false; // появился ли уже первый «huge» — по нему музыка переходит в боевую
-let player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
+// знакомство с типами: какие игрок уже видел и когда была последняя «премьера» нового типа.
+// Новый тип выходит впервые в одиночку и с паузой introGap после прошлой премьеры —
+// чтобы игрок не встречал двух незнакомцев разом (см. pickStreamType).
+let seenTypes = new Set();
+let lastDebutAt = -999;
+let player = { level: 0, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
 let pendingLevels = 0, choosing = false;
+// Перки забега: при старте тасуем CFG.leveling.perks и выдаём первыми двумя из
+// массива. После выбора срезаем пару целиком (slice(2)) — невыбранный из пары
+// больше не выпадает. 10 перков → 5 пар → ровно 5 уровней.
+let perkPool = [];
 let killSinceRepair = 0;   // счётчик для перка «Кладка из костей»
 let usedSecondWind = false; // перк «Второе дыхание» — одноразовое спасение врат
 // ── статистика сессии (для лога прохождений, см. logSession) ──
@@ -858,18 +867,38 @@ function hitCyclops(c, dmg){
 }
 
 // ── поток врагов ───────────────────────────────────────────────────
-// случайный тип из пула с учётом времени: тип доступен после from,
-// его вес = weight + grow*(прошло секунд с разблокировки)
+// Выбор типа очередного моба. Два режима:
+//  1) «премьера» — если есть разблокированный по времени тип, которого игрок ещё не
+//     видел, и с прошлой премьеры прошло не меньше introGap секунд, то принудительно
+//     выпускаем именно его (в порядке разблокировки). Он выходит один, а пока идёт
+//     отсчёт introGap — спавнятся только уже знакомые типы, так что рядом с новичком
+//     не появится другой незнакомый моб.
+//  2) обычный поток — случайный тип из УЖЕ ВИДЕННЫХ с учётом времени:
+//     вес = weight + grow*(прошло секунд с разблокировки).
 function pickStreamType(){
   const pool = CFG.stream.pool;
+  const unlocked = pool.filter(e => gameTime >= e.from);
+
+  // 1) премьера нового типа — по одному и с паузой между премьерами
+  if(gameTime - lastDebutAt >= CFG.stream.introGap){
+    const debut = unlocked.find(e => !seenTypes.has(e.type)); // самый ранний невиденный
+    if(debut){
+      seenTypes.add(debut.type);
+      lastDebutAt = gameTime;
+      return debut.type;
+    }
+  }
+
+  // 2) обычный поток — только из уже знакомых типов
+  const seen = unlocked.filter(e => seenTypes.has(e.type));
   const w = [];
   let total = 0;
-  for(const e of pool){
-    const ww = gameTime < e.from ? 0 : e.weight + e.grow * (gameTime - e.from);
+  for(const e of seen){
+    const ww = e.weight + e.grow * (gameTime - e.from);
     w.push(ww); total += ww;
   }
   let r = Math.random() * total;
-  for(let i = 0; i < pool.length; i++){ r -= w[i]; if(r <= 0) return pool[i].type; }
+  for(let i = 0; i < seen.length; i++){ r -= w[i]; if(r <= 0) return seen[i].type; }
   return 'small';
 }
 
@@ -901,14 +930,16 @@ function spawnShockwave(x, y, src){
 
 function updateXPBar(){
   lvlEl.textContent = player.level;
+  // все 5 перков выбраны — полоса полна, дальше не качаемся
+  if(player.level >= CFG.leveling.levels){ xpFill.style.width = '100%'; return; }
   xpFill.style.width = Math.min(100, 100 * player.xp / player.xpNeed) + '%';
 }
 
 function gainXP(n){
   if(!CFG.leveling.enabled) return; // прокачка выключена
-  n = Math.round(n * (1 + CFG.skills.bounty.mult * sk('bounty'))); // «Мародёр»: больше опыта
   player.xp += n;
-  while(player.xp >= player.xpNeed){
+  // не больше CFG.leveling.levels уровней за забег (пул перков всё равно кончится)
+  while(player.xp >= player.xpNeed && player.level < CFG.leveling.levels){
     player.xp -= player.xpNeed;
     player.level++;
     player.xpNeed = Math.round(player.xpNeed * CFG.leveling.growth);
@@ -916,13 +947,6 @@ function gainXP(n){
   }
   updateXPBar();
   if(pendingLevels > 0 && !choosing && running) openSkillChoice();
-}
-
-// скиллы, доступные к выпадению: не на максимуме и с выполненными требованиями
-function availableSkills(){
-  return Object.entries(CFG.skills)
-    .filter(([id, sd]) => sk(id) < sd.max && (!sd.requires || sk(sd.requires) > 0))
-    .map(([id, sd]) => ({id, ...sd}));
 }
 
 function openSkillChoice(){
@@ -933,17 +957,11 @@ function openSkillChoice(){
     held.armed = false; held.noEyeDmg = false; held.noDmg = true;
     held = null; cv.classList.remove('grabbing');
   }
-  const pool = availableSkills();
-  if(pool.length === 0){
-    // всё прокачано — вместо скилла чиним врата
-    pendingLevels--;
-    hp = Math.min(100, hp + 15); hpFill.style.width = hp + '%';
-    floatText(MOUNTAIN_X, 200, '+15 ВРАТАМ', '#2f6e3c', 1.4);
-    if(pendingLevels > 0) openSkillChoice();
-    return;
-  }
+  // пул кончился (все перки разобраны) — выборов больше нет
+  if(perkPool.length < 2){ pendingLevels = 0; return; }
   choosing = true;
-  const offer = pool.sort(() => Math.random() - .5).slice(0, 3);
+  // первые два перка пула = пара этого уровня (пул уже перетасован при старте)
+  const offer = perkPool.slice(0, 2).map(id => ({ id, ...CFG.skills[id] }));
   const holdMs = (CFG.leveling.pickHold ?? 0.5) * 1000;
   skillCards.innerHTML = '';
   for(const s of offer){
@@ -951,7 +969,6 @@ function openSkillChoice(){
     btn.className = 'skill-card';
     // .hold-fill — полоска прогресса удержания (растёт слева направо за holdMs)
     btn.innerHTML = '<b>' + s.name + '</b>' + s.desc +
-      '<div class="lvl-tag">уровень ' + (sk(s.id)+1) + '/' + s.max + '</div>' +
       '<div class="hold-fill"></div>';
     const fill = btn.querySelector('.hold-fill');
     let timer = null;
@@ -983,7 +1000,9 @@ function openSkillChoice(){
 }
 
 function pickSkill(id){
-  player.skills[id] = sk(id) + 1;
+  player.skills[id] = 1; // перк взят (все перки одноуровневые)
+  // срезаем всю пару: выбранный применён, второй (отвергнутый) выбывает на забег
+  perkPool = perkPool.slice(2);
   pendingLevels--;
   lvlOverlay.classList.add('hidden');
   if(pendingLevels > 0){ openSkillChoice(); return; }
@@ -2254,7 +2273,8 @@ function draw(){
     cx.translate(d.x + s/2, d.y + s/2);
     cx.rotate(d.rot);
     if(d.flip) cx.scale(-1,1);
-    cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s);
+    if(d.type==='bomber') drawBomber(s, last*0.001, d.x); // сам — ходячая бомба
+    else cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s);
     // вспышка при уроне
     if(d.flash > 0){
       cx.globalAlpha = Math.min(1, d.flash*5)*0.7;
@@ -2270,35 +2290,6 @@ function draw(){
     if(d.type==='roller' && d.hasBoulder){
       const br = CFG.spells.boulder.r;
       cx.drawImage(SPELL_SPRITES.boulder, d.x+s/2-br*0.8, d.y-br*1.1, br*1.6, br*1.6);
-    }
-    // бомбер несёт каноничную чёрную бомбу с шипящим фитилём (заметная издалека)
-    if(d.type==='bomber'){
-      const t = last * 0.001;
-      const bombR = s * 0.42;
-      const bx = d.x + s/2, by = d.y - bombR*0.5;       // над головой
-      // тело — чёрный шар с бликом
-      cx.fillStyle = '#0c0a10';
-      cx.beginPath(); cx.arc(bx, by, bombR, 0, Math.PI*2); cx.fill();
-      cx.fillStyle = 'rgba(255,255,255,0.22)';
-      cx.beginPath(); cx.arc(bx - bombR*0.34, by - bombR*0.34, bombR*0.3, 0, Math.PI*2); cx.fill();
-      // колпачок-горловина
-      cx.fillStyle = '#2a1e12';
-      cx.fillRect(bx - bombR*0.3, by - bombR - 3, bombR*0.6, 4);
-      // фитиль
-      cx.strokeStyle = '#8a6a38'; cx.lineWidth = 2; cx.lineCap = 'round';
-      cx.beginPath();
-      cx.moveTo(bx, by - bombR - 2);
-      cx.quadraticCurveTo(bx + 7, by - bombR - 11, bx + 2, by - bombR - 17);
-      cx.stroke();
-      cx.lineCap = 'butt';
-      // искра на кончике фитиля
-      const sp = 2 + Math.abs(Math.sin(t*20))*2;
-      cx.globalCompositeOperation = 'lighter';
-      cx.fillStyle = FIRE.colors[2];
-      cx.beginPath(); cx.arc(bx + 2, by - bombR - 17, sp+1.5, 0, Math.PI*2); cx.fill();
-      cx.fillStyle = FIRE.colors[0];
-      cx.beginPath(); cx.arc(bx + 2, by - bombR - 17, sp*0.5, 0, Math.PI*2); cx.fill();
-      cx.globalCompositeOperation = 'source-over';
     }
     // полоска ХП крупного моба — показываем, только если он уже ранен
     const mhp = TYPES[d.type].hp;
@@ -2700,6 +2691,73 @@ function drawEntityFire(x, y, w, h, scale){
   cx.restore();
 }
 
+// Бомбер — не демон с бомбой, а сама ходячая бомба: чёрный шар на ножках,
+// со злыми глазами, раскалёнными трещинами и шипящим фитилём.
+// Рисуется в локальных координатах с центром (0,0); вызывается уже внутри
+// translate/rotate/flip из основного цикла отрисовки демонов.
+function drawBomber(s, t, phase){
+  const R = s * 0.34;            // радиус тела-бомбы
+  const cy = -s * 0.04;          // центр тела — чуть выше середины спрайта
+  const groundY = s * 0.46;      // низ спрайта — туда упираются ножки
+  const swing = Math.sin(t*7 + phase*0.05); // фаза шага (своя у каждого моба)
+
+  // ── ножки (под телом, чтобы тело перекрывало бёдра) ──
+  cx.strokeStyle = '#1a1014'; cx.lineWidth = Math.max(2, s*0.07); cx.lineCap = 'round';
+  for(const dir of [-1, 1]){
+    const hipX = dir * R*0.45, hipY = cy + R*0.8;
+    const step = swing * dir;                       // ноги в противофазе
+    const footX = hipX + step * R*0.5;
+    const footY = groundY - Math.max(0, step)*R*0.25; // на шаге ступня чуть приподнята
+    cx.beginPath(); cx.moveTo(hipX, hipY); cx.lineTo(footX, footY); cx.stroke();
+    cx.beginPath(); cx.moveTo(footX, footY); cx.lineTo(footX + dir*R*0.3, footY); cx.stroke(); // ступня
+  }
+  cx.lineCap = 'butt';
+
+  // ── тело-бомба ──
+  cx.fillStyle = '#0c0a10';
+  cx.beginPath(); cx.arc(0, cy, R, 0, Math.PI*2); cx.fill();
+  cx.fillStyle = 'rgba(255,255,255,0.20)';        // блик
+  cx.beginPath(); cx.arc(-R*0.36, cy - R*0.36, R*0.3, 0, Math.PI*2); cx.fill();
+
+  // ── раскалённые трещины внутри ──
+  cx.globalCompositeOperation = 'lighter';
+  cx.strokeStyle = '#ff6a1a'; cx.lineWidth = Math.max(1, s*0.035); cx.lineCap = 'round';
+  cx.beginPath();
+  cx.moveTo(-R*0.12, cy + R*0.32); cx.lineTo(R*0.04, cy + R*0.02); cx.lineTo(R*0.3, cy + R*0.2);
+  cx.stroke();
+  cx.lineCap = 'butt';
+  cx.globalCompositeOperation = 'source-over';
+
+  // ── злые глаза ──
+  for(const dir of [-1, 1]){
+    cx.fillStyle = '#ffcf3a';
+    cx.beginPath(); cx.arc(dir*R*0.36, cy - R*0.12, R*0.2, 0, Math.PI*2); cx.fill();
+    cx.fillStyle = '#0a0608';                      // зрачок
+    cx.beginPath(); cx.arc(dir*R*0.4, cy - R*0.08, R*0.09, 0, Math.PI*2); cx.fill();
+  }
+
+  // ── горловина-колпачок ──
+  const capY = cy - R - s*0.04;
+  cx.fillStyle = '#2a1e12';
+  cx.fillRect(-R*0.3, capY, R*0.6, s*0.06);
+
+  // ── фитиль с искрой ──
+  const tipX = R*0.2, tipY = capY - s*0.18;
+  cx.strokeStyle = '#8a6a38'; cx.lineWidth = Math.max(2, s*0.05); cx.lineCap = 'round';
+  cx.beginPath();
+  cx.moveTo(0, capY);
+  cx.quadraticCurveTo(R*0.55, capY - s*0.08, tipX, tipY);
+  cx.stroke();
+  cx.lineCap = 'butt';
+  const sp = 2 + Math.abs(Math.sin(t*20 + phase))*2;
+  cx.globalCompositeOperation = 'lighter';
+  cx.fillStyle = FIRE.colors[2];
+  cx.beginPath(); cx.arc(tipX, tipY, sp+1.5, 0, Math.PI*2); cx.fill();
+  cx.fillStyle = FIRE.colors[0];
+  cx.beginPath(); cx.arc(tipX, tipY, sp*0.5, 0, Math.PI*2); cx.fill();
+  cx.globalCompositeOperation = 'source-over';
+}
+
 // ── HUD / overlay ──────────────────────────────────────────────────
 const scoreEl = document.getElementById('score');
 const threatEl = document.getElementById('threat');
@@ -2739,8 +2797,10 @@ function start({ skipTutorial = false, skipDialogue = false } = {}){
   score=0; hp=100; held=null;
   gameTime=0; spawnTimer=0.6; cyclopsTimer=CFG.stream.cyclopsFirst; threat=1;
   hugeSeen=false;
-  player = { level: 1, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
+  seenTypes = new Set(); lastDebutAt = -999;
+  player = { level: 0, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
   pendingLevels = 0; choosing = false;
+  perkPool = [...CFG.leveling.perks].sort(() => Math.random() - .5); // тасуем перки на забег
   killSinceRepair = 0; usedSecondWind = false;
   afterFirstPending = false; tutDemon = null; afterFirstTimer = 0; // второй диалог ворона ещё не показан
   stats = newStats();
