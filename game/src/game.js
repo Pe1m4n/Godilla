@@ -537,6 +537,7 @@ function spawnDemon(type, onScreen = false){
     walled: false,           // уже упёрся в стену замка (защита от стука каждый кадр)
     roofed: false,           // уже лежит/упёрся в крышу башни
     scream: null,            // крик падения, пока моб летит после ручного броска
+    screamDelay: 0,          // отложенный старт крика (для пачек из торнадо)
     burnT: 0, burnTick: 0, burnFx: 0, fireBurstReady: false,
     hasBoulder: type === 'roller', // носильщик идёт с валуном, пока его не отобрали
     flip: Math.random()<.5,
@@ -571,6 +572,8 @@ const SCREAM_LISTENER = {
 };
 const DEMON_SCREAM_CHANCE = 0.45;
 const DEMON_SCREAM_THROW_MIN_SPEED = 260;
+const DEMON_SCREAM_TORNADO_STEP = 0.09;
+const DEMON_SCREAM_TORNADO_JITTER = 0.035;
 
 function screamVolume(d){
   const s = sizeOf(d);
@@ -587,11 +590,21 @@ const SCREAMS_ENABLED = true;
 function startDemonScream(d){
   if(!SCREAMS_ENABLED) return;
   if(d.scream || d.type === 'titan') return;
+  d.screamDelay = 0;
   d.scream = sfx.falling(screamRate(d), screamVolume(d));
 }
 
+function scheduleDemonScream(d, delay = 0){
+  if(!SCREAMS_ENABLED) return;
+  if(d.scream || d.type === 'titan') return;
+  d.screamDelay = Math.max(0, delay);
+  if(d.screamDelay <= 0) startDemonScream(d);
+}
+
 function stopDemonScream(d){
-  if(!d || !d.scream) return;
+  if(!d) return;
+  d.screamDelay = 0;
+  if(!d.scream) return;
   d.scream.stop();
   d.scream = null;
 }
@@ -600,7 +613,15 @@ function stopAllDemonScreams(){
   for(const d of demons){ stopDemonScream(d); }
 }
 
-function updateDemonScream(d){
+function updateDemonScream(d, dt){
+  if(d.screamDelay > 0){
+    if(d.state !== 'fly'){
+      d.screamDelay = 0;
+    } else {
+      d.screamDelay -= dt;
+      if(d.screamDelay <= 0) startDemonScream(d);
+    }
+  }
   if(!d.scream) return;
   if(d.state !== 'fly'){
     stopDemonScream(d);
@@ -2015,6 +2036,7 @@ function updateTornadoes(dt){
     if(sk('cyclone') > 0){ tr.dmgT -= dt; if(tr.dmgT <= 0){ dmgNow = true; tr.dmgT = CFG.skills.cyclone.every; } }
     const caught = [];
     let anyBurning = false;
+    let screamOffset = 0;
     for(const d of [...demons]){
       if(d === held || d.state === 'held' || d.state === 'offscreen' || d.state === 'burrow') continue;
       if(Math.abs((d.x + sizeOf(d)/2) - tr.x) > tr.reach) continue;
@@ -2032,7 +2054,10 @@ function updateTornadoes(dt){
       if(!d.rotV) d.rotV = rnd(-8, 8);
       d.armed = true; d.noEyeDmg = true; d.hitsLeft = sk('collide'); d.noDmg = false; d.grounded = false;
       d.windTossed = true; // заброшенный ураганом за стену не нанесёт урон вратам
-      if(firstTornadoCatch && Math.random() < DEMON_SCREAM_CHANCE) startDemonScream(d);
+      if(firstTornadoCatch && Math.random() < DEMON_SCREAM_CHANCE){
+        scheduleDemonScream(d, screamOffset + rnd(0, DEMON_SCREAM_TORNADO_JITTER));
+        screamOffset += DEMON_SCREAM_TORNADO_STEP;
+      }
       if(dmgNow){ hurt(d, CFG.skills.cyclone.dmg, 300); }
       if(demons.includes(d)){ caught.push(d); if(burning(d)) anyBurning = true; }
     }
@@ -2676,7 +2701,7 @@ function update(dt){
 
   for(const d of [...demons]){
     if(!demons.includes(d)) continue;
-    updateDemonScream(d);
+    updateDemonScream(d, dt);
     d.t += dt;
     if(d.flash > 0) d.flash -= dt;
     if(d.cycHit > 0) d.cycHit -= dt;

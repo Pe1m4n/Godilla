@@ -27,7 +27,9 @@ const SFX_CFG = {
   // взрыв бомбера при гибели (одиночный)
   explode: { name: 'explosion', vol: 0.7,  pitchJitter: 0.08 },
   // кровавый шмяк при гибели моба: случайный вариант из assets/sounds/Shmiak
-  splat: { vol: 0.75, pitchJitter: 0 },
+  splat: { vol: 0.75, pitchJitter: 0.045 },
+  // урон по мобу: случайный punch из assets/sounds/Punch
+  hurt: { vol: 0.55, pitchJitter: 0.055 },
   // удар: несколько вариаций сэмпла (разный питч/тембр) — берём случайную, плюс
   // питч ещё подкручивается силой удара. Файлы уже обрезаны от тишины в начале.
   slap:  { names: ['slap_1', 'slap_2', 'slap_3', 'slap_4'],
@@ -48,6 +50,8 @@ for (const [path, url] of Object.entries(sndUrls)) {
   SND[name] = url;
   const shmiakFile = path.match(/\/Shmiak\/(shmiak\d+\.wav)$/i)?.[1];
   if(shmiakFile) SND['Shmiak/' + shmiakFile] = url;
+  const punchFile = path.match(/\/Punch\/(Punch_\d+\.wav)$/i)?.[1];
+  if(punchFile) SND['Punch/' + punchFile] = url;
 }
 if (SND['478284__joao_janz__finger-tap-2_2']) SND['finger-tap'] = SND['478284__joao_janz__finger-tap-2_2'];
 const SMALL_FALLING_NAMES = Object.keys(SND)
@@ -55,6 +59,9 @@ const SMALL_FALLING_NAMES = Object.keys(SND)
   .sort((a, b) => parseInt(a.replace(/\D+/g, ''), 10) - parseInt(b.replace(/\D+/g, ''), 10));
 const SHMIAK_NAMES = Object.keys(SND)
   .filter(name => /^Shmiak\/shmiak\d+\.wav$/i.test(name))
+  .sort((a, b) => parseInt(a.replace(/\D+/g, ''), 10) - parseInt(b.replace(/\D+/g, ''), 10));
+const PUNCH_NAMES = Object.keys(SND)
+  .filter(name => /^Punch\/Punch_\d+\.wav$/i.test(name))
   .sort((a, b) => parseInt(a.replace(/\D+/g, ''), 10) - parseInt(b.replace(/\D+/g, ''), 10));
 
 let AC = null;
@@ -353,7 +360,16 @@ export const sfx = {
       beep(140, .18, 'sawtooth', .12); beep(90, .25, 'triangle', .1);
     }
   },
-  hurt:  () => { debugSfx('mob hurt', 'fallback beep'); beep(220, .1, 'sawtooth', .1); },
+  hurt:  () => {
+    const C = SFX_CFG.hurt;
+    const name = PUNCH_NAMES[(Math.random() * PUNCH_NAMES.length) | 0];
+    if(name && playSample(name, C.vol, 1, C.pitchJitter)){
+      debugSfx('mob hurt', name);
+    } else {
+      debugSfx('mob hurt', 'fallback beep');
+      beep(220, .1, 'sawtooth', .1);
+    }
+  },
   reach: () => beep(110, .3, 'square', .1),
   thud:  () => { debugSfx('mob thud', 'fallback beep'); beep(200, .06, 'triangle', .06); },
   zap:   () => {
