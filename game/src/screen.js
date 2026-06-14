@@ -36,4 +36,23 @@ requestAnimationFrame(fit);
 setTimeout(fit, 100);
 setTimeout(fit, 500);
 setTimeout(fit, 1500);
-// Полноэкранный режим — через встроенную кнопку itch.io (галка «Enable fullscreen button»).
+// ── кнопка полноэкранного режима ──
+// На itch есть своя кнопка, но на GitHub Pages/в браузере нужна своя.
+// iOS Safari не умеет Fullscreen API для произвольных элементов — там кнопка
+// просто ничего не сделает (ограничение платформы), на десктопе и Android работает.
+const fsBtn = document.getElementById('fsBtn');
+if(fsBtn){
+  fsBtn.addEventListener('click', () => {
+    const el = document.documentElement;
+    const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+    try {
+      if(!isFs){
+        (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+      } else {
+        (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+      }
+    } catch(e){}
+    fsBtn.blur();
+  });
+}
+document.addEventListener('webkitfullscreenchange', fit);

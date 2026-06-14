@@ -2511,7 +2511,7 @@ function onDown(e){
     if(d.type !== 'roller' || !d.hasBoulder || d.state !== 'walk') continue;
     const s = sizeOf(d);
     const dist = Math.hypot(p.x-(d.x+s/2), p.y-(d.y+s/2));
-    if(dist < TYPES.roller.grabR * (1 + CFG.skills.grip.mult * sk('grip'))){
+    if(dist < TYPES.roller.grabR * (1 + CFG.skills.grip.mult * sk('grip')) * (usingTouch ? CFG.touchGrabMult : 1)){
       heldBoulder = { x: p.x, y: p.y };
       d.hasBoulder = false;
       cv.classList.add('grabbing');
@@ -2526,7 +2526,7 @@ function onDown(e){
     if(d.state==='held' || d.state==='burrow' || TYPES[d.type].liftable === false) continue;
     const s = sizeOf(d);
     const dist = Math.hypot(p.x-(d.x+s/2), p.y-(d.y+s/2));
-    const gr = TYPES[d.type].grabR * (1 + CFG.skills.grip.mult * sk('grip'));
+    const gr = TYPES[d.type].grabR * (1 + CFG.skills.grip.mult * sk('grip')) * (usingTouch ? CFG.touchGrabMult : 1);
     if(dist < gr && dist < bd){ best=d; bd=dist; }
   }
   if(best){
