@@ -54,6 +54,11 @@ for (const [path, url] of Object.entries(urls)) {
 const players  = {};   // имя трека → HTMLAudioElement (создаётся лениво)
 const intended = {};   // имя трека → желаемая громкость БЕЗ учёта mute (0..1)
 const slope    = {};   // имя трека → скорость текущего перехода (громкость/сек)
+// cur — наша СОБСТВЕННАЯ текущая громкость трека (0..1). Ведём её сами по времени,
+// а не читаем a.volume: на iOS/iPadOS Safari свойство volume игнорируется (только
+// аппаратные кнопки), и фейд по a.volume никогда не «доезжал» до 0 — трек не вставал
+// на паузу и наслаивался. По cur пауза срабатывает по истечении времени фейда везде.
+const cur      = {};
 let muted = false;
 let masterVol = 1;     // общий множитель громкости музыки (ползунок), 0..1
 let raf = 0, lastT = 0;
@@ -74,6 +79,7 @@ function ensure(name) {
   const a = new Audio(url);
   a.loop = true; a.preload = 'auto'; a.volume = 0;
   players[name] = a;
+  cur[name] = 0;
   return a;
 }
 
@@ -83,7 +89,7 @@ function fadeTo(name, vol, seconds) {
   if (!a) return;
   intended[name] = vol;
   const eff = effVol(name);
-  slope[name] = seconds > 0 ? Math.max(1e-4, Math.abs(a.volume - eff) / seconds) : 1e9;
+  slope[name] = seconds > 0 ? Math.max(1e-4, Math.abs((cur[name] || 0) - eff) / seconds) : 1e9;
   if (eff > 0 && !muted) a.play().catch(() => {}); // вызвано из обработчика клика — жест есть
   startTick();
 }
@@ -100,13 +106,14 @@ function tick(t) {
     if (!a) continue;
     const eff = effVol(name);
     if (eff > 0 && a.paused) a.play().catch(() => {});
-    if (Math.abs(a.volume - eff) > 0.002) {
-      const dir = Math.sign(eff - a.volume);
-      a.volume = clamp01(a.volume + dir * slope[name] * dt);
+    let c = cur[name] || 0;
+    if (Math.abs(c - eff) > 0.002) {
+      c = clamp01(c + Math.sign(eff - c) * slope[name] * dt);
+      cur[name] = c; a.volume = c;   // a.volume игнорируется на iOS — но cur ведём сами
       active = true;
     } else {
-      a.volume = eff;
-      if (eff === 0 && !a.paused) a.pause(); // дошёл до тишины — снимаем с проигрывания
+      cur[name] = eff; a.volume = eff;
+      if (eff === 0 && !a.paused) a.pause(); // дошёл до тишины (по cur) — снимаем с проигрывания
     }
   }
   if (active) raf = requestAnimationFrame(tick);
@@ -178,7 +185,7 @@ export const music = {
       const a = players[name];
       if (!a) continue;
       const eff = effVol(name);
-      slope[name] = Math.max(1e-4, Math.abs(a.volume - eff) / MUSIC_CFG.muteFade);
+      slope[name] = Math.max(1e-4, Math.abs((cur[name] || 0) - eff) / MUSIC_CFG.muteFade);
     }
     startTick();
   },
@@ -192,7 +199,7 @@ export const music = {
       if (!a) continue;
       const eff = effVol(name);
       if (eff > 0 && !muted && a.paused) a.play().catch(() => {});
-      a.volume = clamp01(eff);
+      cur[name] = eff; a.volume = clamp01(eff);
       if (eff === 0 && !a.paused) a.pause();
     }
   },
