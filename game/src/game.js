@@ -537,7 +537,6 @@ function spawnDemon(type, onScreen = false){
     walled: false,           // уже упёрся в стену замка (защита от стука каждый кадр)
     roofed: false,           // уже лежит/упёрся в крышу башни
     scream: null,            // крик падения, пока моб летит после ручного броска
-    fuseSnd: null,           // loop-звук фитиля у бомбера (звучит, пока жив)
     burnT: 0, burnTick: 0, burnFx: 0, fireBurstReady: false,
     hasBoulder: type === 'roller', // носильщик идёт с валуном, пока его не отобрали
     flip: Math.random()<.5,
@@ -550,7 +549,6 @@ function spawnDemon(type, onScreen = false){
   }
   if(T.burrow){ d.state = 'burrow'; }                            // стартует под землёй
   if(T.fireEvery){ d.fireT = T.fireEvery * rnd(.4, 1); }         // дальний — таймер выстрела
-  if(type === 'bomber'){ d.fuseSnd = sfx.fuse(); }               // фитиль шипит, пока бомбер жив
   demons.push(d);
   return d;
 }
@@ -571,6 +569,8 @@ const SCREAM_LISTENER = {
   near: 170,
   far: 780,
 };
+const DEMON_SCREAM_CHANCE = 0.45;
+const DEMON_SCREAM_THROW_MIN_SPEED = 260;
 
 function screamVolume(d){
   const s = sizeOf(d);
@@ -596,15 +596,8 @@ function stopDemonScream(d){
   d.scream = null;
 }
 
-// заглушить фитиль бомбера (зовётся при его удалении: гибель / врата / заброс в город)
-function stopFuse(d){
-  if(!d || !d.fuseSnd) return;
-  d.fuseSnd.stop();
-  d.fuseSnd = null;
-}
-
 function stopAllDemonScreams(){
-  for(const d of demons){ stopDemonScream(d); stopFuse(d); }
+  for(const d of demons){ stopDemonScream(d); }
 }
 
 function updateDemonScream(d){
@@ -927,7 +920,6 @@ function hurt(d, dmg, sp){
 
 function splat(d, sp){
   stopDemonScream(d);
-  stopFuse(d);
   sfx.splat();
   shake = Math.max(shake, TYPES[d.type].shakeSplat); // фиксированная тряска по типу (без влияния скорости)
   stats.kills[d.type] = (stats.kills[d.type] || 0) + 1; stats.killsTotal++;
@@ -1009,7 +1001,6 @@ function bomberBoom(x, y){
 
 function reachMountain(d){
   sfx.reach();
-  stopFuse(d);
   // врата неуязвимы (финал/дебаг) ИЛИ моб был заброшен за стену ураганом — без урона вратам
   if(gateImmune() || d.windTossed){
     shake = Math.max(shake, 5);
@@ -1042,7 +1033,6 @@ function reachMountain(d){
 // Врата получают ДВОЙНОЙ урон, который этот моб нанёс бы им у стены.
 function cityBreach(d){
   sfx.reach();
-  stopFuse(d);
   // врата неуязвимы (финал/дебаг) — моб улетел в город, но урона вратам нет
   if(gateImmune()){ demons.splice(demons.indexOf(d),1); return; }
   stats.cityBreaches++;
@@ -1581,7 +1571,7 @@ function skyLightningKill(){
 }
 
 function explodeTitan(d){
-  stopDemonScream(d); stopFuse(d);
+  stopDemonScream(d);
   const s = sizeOf(d), px = d.x + s/2, py = d.y + s/2;
   emitFireParticles(px, py, 20, 1.4);
   const col = bloodCol(d.type);
@@ -2032,6 +2022,7 @@ function updateTornadoes(dt){
         d.state = 'stun'; d.stun = Math.max(d.stun, 0.25); d.vx = d.vy = 0; d.rot = 0;
         continue;
       }
+      const firstTornadoCatch = !d.windTossed;
       d.state = 'fly';
       const w = (d.type==='small'||d.type==='dog') ? 1.4 : (d.type==='huge') ? 0.6 : 0.85;
       const dir = (tr.x - (d.x + sizeOf(d)/2)) >= 0 ? 1 : -1;
@@ -2041,6 +2032,7 @@ function updateTornadoes(dt){
       if(!d.rotV) d.rotV = rnd(-8, 8);
       d.armed = true; d.noEyeDmg = true; d.hitsLeft = sk('collide'); d.noDmg = false; d.grounded = false;
       d.windTossed = true; // заброшенный ураганом за стену не нанесёт урон вратам
+      if(firstTornadoCatch && Math.random() < DEMON_SCREAM_CHANCE) startDemonScream(d);
       if(dmgNow){ hurt(d, CFG.skills.cyclone.dmg, 300); }
       if(demons.includes(d)){ caught.push(d); if(burning(d)) anyBurning = true; }
     }
@@ -2471,7 +2463,7 @@ function onUp(){
     held.armed = true; // заряжен до первого касания земли
     held.noEyeDmg = false; // запрет от торнадо не переносится на ручной бросок
     held.hitsLeft = sk('collide'); // без «Тарана» столкновения безвредны
-    if(releaseSpeed > 260 && Math.random() < 0.45) startDemonScream(held);
+    if(releaseSpeed > DEMON_SCREAM_THROW_MIN_SPEED && Math.random() < DEMON_SCREAM_CHANCE) startDemonScream(held);
     sfx.throw();
     held = null;
   }
