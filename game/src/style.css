@@ -9,6 +9,7 @@
 html,body{height:100%;overflow:hidden;background:#14121c;}
 body{display:flex;align-items:center;justify-content:center;font-family:var(--font-body);}
 #wrap{position:relative;transform-origin:center center;cursor:none;}
+#wrap *{cursor:none !important;}
 canvas{
   display:block;
   image-rendering:pixelated;

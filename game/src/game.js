@@ -2988,7 +2988,7 @@ function updateCursorElement(){
   const el = ensureCursorEl();
   if(!el) return;
   const img = cursorFrames[cursorFrameNum()];
-  if(!running || !img){
+  if(!img){
     el.style.display = 'none';
     return;
   }
