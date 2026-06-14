@@ -15,7 +15,7 @@ const SFX_CFG = {
   throw: { names: ['whoosh_1', 'whoosh_2'], vol: 0.55, pitchJitter: 0.12 }, // бросок: случайный вуш + разброс питча
   tap:   { name: 'finger-tap',              vol: 1.0,  pitchJitter: 0.08 }, // нажатие любой кнопки UI
   lightning: { name: 'lightning', vol: 0.85, pitchJitter: 0.07, trim: 1.0 }, // разряд: стартуем с 1-й секунды файла
-  tornado:   { name: 'wind',      vol: 0.825, pitchJitter: 0.05, trim: 1.0, fadeOut: 2.0 }, // ветер: старт с 1с + огибающая
+  tornado:   { name: 'wind',      vol: 1.2375, pitchJitter: 0.05, trim: 1.0, fadeOut: 2.0 }, // ветер: старт с 1с + огибающая
   // удар: несколько вариаций сэмпла (разный питч/тембр) — берём случайную, плюс
   // питч ещё подкручивается силой удара. Файлы уже обрезаны от тишины в начале.
   slap:  { names: ['slap_1', 'slap_2', 'slap_3', 'slap_4'],
