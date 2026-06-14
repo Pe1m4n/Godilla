@@ -39,10 +39,11 @@ let actT = 0;                // сколько секунд показывает
 let enabledThisRun = true;   // включено ли обучение в этой партии
 const shownOnce = new Set(); // какие одноразовые сообщения уже показывали
 let msgEl = null, msgTitleEl = null, msgSubEl = null; // HTML-элемент сообщения и его строки
+let continueBtn = null;      // кнопка-страховка «Продолжить» (см. ниже) — против хардлока
 
 export function initTutorial(env){
   ({ cx, W, H, FONT, sizeOf } = env);
-  buildTextEl(); buildMsgEl();
+  buildTextEl(); buildMsgEl(); buildContinueBtn();
 }
 
 // Текст подсказки — отдельный HTML-элемент поверх холста, а НЕ на самом холсте.
@@ -98,6 +99,32 @@ function buildMsgEl(){
 }
 function showMsg(on){ if(msgEl) msgEl.style.display = on ? 'block' : 'none'; }
 
+// Кнопка-страховка «Продолжить»: появляется внизу экрана через CFG.tutorial.continueAt
+// секунд после показа любого тутора. По клику — принудительно закрывает текущий тутор,
+// что бы ни случилось. Нужна, чтобы НИКОГДА не было хардлока (не схватил моба, не понял,
+// что делать, и т.п.). Кнопка кликабельна (pointer-events:auto), стиль — как в меню.
+function buildContinueBtn(){
+  if(continueBtn) return;
+  const wrap = document.getElementById('wrap');
+  if(!wrap) return;
+  continueBtn = document.createElement('button');
+  continueBtn.textContent = 'Продолжить';
+  continueBtn.style.cssText =
+    'position:absolute; left:50%; bottom:16px; transform:translateX(-50%);'+
+    'z-index:7; display:none; pointer-events:auto; border:none; cursor:none;'+
+    'font-family:'+FONT+'; font-size:10px; letter-spacing:1px; text-transform:uppercase;'+
+    'padding:9px 20px; background:#3f3124; color:#f1e7d4;';
+  continueBtn.addEventListener('mouseenter', () => { continueBtn.style.background = '#665443'; });
+  continueBtn.addEventListener('mouseleave', () => { continueBtn.style.background = '#3f3124'; });
+  // принудительно закрываем текущий тутор (модальное сообщение или подсказку первого моба)
+  continueBtn.addEventListener('click', () => {
+    if(msgActive) dismissTutorialMessage();
+    else if(active) tutorialComplete();
+  });
+  wrap.appendChild(continueBtn);
+}
+function showContinue(on){ if(continueBtn) continueBtn.style.display = on ? 'block' : 'none'; }
+
 // сброс под новую партию (в start())
 // enabled — включать ли обучение в этой партии. По умолчанию берём из конфига;
 // отладочный старт «без диалогов и туторов» передаёт false и выключает обучение целиком.
@@ -105,7 +132,7 @@ export function resetTutorial(enabled = CFG.tutorial.enabled){
   enabledThisRun = enabled;
   pending = enabled; active = false; demon = null; showText(false);
   shownOnce.clear();
-  msgActive = false; msgKey = null; showMsg(false);
+  msgActive = false; msgKey = null; showMsg(false); showContinue(false);
 }
 
 export const tutorialActive = () => active;
@@ -120,10 +147,13 @@ export const tutorialMsgLocked    = () => msgActive && msgT < (CFG.tutorial.skip
 export const tutorialMsgTime      = () => msgT; // сколько секунд сообщение на экране
 export const tutorialActiveLocked = () => active   && actT < (CFG.tutorial.skipLock ?? 0);
 
-// тикает каждый кадр (даже на паузе) — копит время показа тутора/сообщения
+// тикает каждый кадр (даже на паузе) — копит время показа тутора/сообщения и
+// через continueAt секунд показывает кнопку-страховку «Продолжить»
 export function tutorialTick(dt){
   if(msgActive) msgT += dt;
   if(active) actT += dt;
+  const at = CFG.tutorial.continueAt ?? 2;
+  showContinue((msgActive && msgT >= at) || (active && actT >= at));
 }
 
 // Показать одноразовое модальное сообщение (раз за партию, по ключу). Замораживает мир.
@@ -142,7 +172,7 @@ export function tutorialTryMessage(key, title, sub, dismiss = 'click', top = '40
 // закрыть модальное сообщение — мир оживает
 export function dismissTutorialMessage(){
   if(!msgActive) return;
-  msgActive = false; msgKey = null; showMsg(false);
+  msgActive = false; msgKey = null; showMsg(false); showContinue(false);
 }
 
 // первый моб вышел — заморозить мир и взять его целью. true = обучение началось
@@ -153,7 +183,7 @@ export function tutorialOnFirstDemon(demons){
 }
 
 // обучение пройдено (игрок схватил подсвеченного моба)
-export function tutorialComplete(){ active = false; showText(false); }
+export function tutorialComplete(){ active = false; showText(false); showContinue(false); }
 
 // подсветка моба поверх маски: мягкое свечение + сам спрайт. Возвращает центр/размер.
 function highlightDemon(d){

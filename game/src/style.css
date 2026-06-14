@@ -200,7 +200,7 @@ canvas{
 /* шестерёнка настроек — слева снизу */
 /* ВРЕМЕННЫЙ дебаг-таймер боя — справа сверху, под полоской прочности врат */
 #debugTimer{
-  position:absolute;top:56px;right:12px;z-index:6;
+  position:absolute;top:56px;right:46px;z-index:6; /* левее — справа от него кнопка паузы */
   pointer-events:none;
   font-family:var(--font-pixel);font-size:12px;line-height:1;
   color:#fffdf5;background:rgba(26,22,38,.7);
@@ -270,7 +270,8 @@ canvas{
 }
 #lb-close:hover{background:#665443;}
 /* пауза — справа сверху, под дебаг-таймером */
-#pauseBtn{top:90px;right:12px;}
+/* пауза — справа от таймера, той же высоты (26px), а не 40×40 как кнопка настроек */
+#pauseBtn{top:56px;right:12px;width:26px;height:26px;font-size:13px;}
 /* ВРЕМЕННАЯ дебаг-кнопка: неуязвимость замка вкл/выкл — под кнопкой паузы */
 #godGateBtn{
   position:absolute;top:138px;right:12px;z-index:5;

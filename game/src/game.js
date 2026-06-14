@@ -431,7 +431,7 @@ let heldBoulder = null; // отобранный у носильщика валу
 let fireballs = [];     // огненные шары дракона: летят к стене; пойманные — обратно
 let pendingFB = [];     // отложенные выстрелы дракона (задержка между двумя в ярости)
 let heldFireball = null;// пойманный фаербол в руке (следует за курсором)
-let dragon = null;      // 3-й босс, пока null — не вышел
+let dragons = [];       // 3-й босс. Массив: в основной игре один, в бесконечном — парами
 let braziersLit = false;// разгорелись ли жаровни на крыше (на 2-й минуте, см. CFG.fire.litAt)
 // контроллер появления боссов: каждый выходит один раз в свой момент
 let boss1Spawned = false, boss2Spawned = false, boss2Dead = false;
@@ -439,6 +439,8 @@ let dragonSpawned = false, dragonTimer = 0, dragonRoared = false, won = false;
 // машина финала после смерти дракона. Фазы (см. updateFinale):
 // null → 'pause' → 'dlgVictory' → 'horde' → 'lightningKill' → 'dlgThor' → 'victoryScreen' → 'endless'
 let finale = null, finaleT = 0;
+// бесконечный режим: время в нём (для эскалации) и планировщик боссов-пар
+let endlessT = 0, endlessBossCount = 0, endlessNextBossAt = 0;
 // врата неуязвимы от смерти дракона до момента, когда молнии Тора выкосят всю орду
 let gateInvuln = false;
 // ДЕБАГ: тумблер «неуязвимый замок» (кнопка рядом с паузой). По умолчанию выкл.
@@ -523,7 +525,9 @@ function spawnDemon(type, onScreen = false){
     x: onScreen ? (W - 60 + rnd(-10,10)) : (W + CFG.stream.spawnOffscreen + rnd(0,24)),
     y: 0,
     vx: 0, vy: 0,
-    speed: rnd(T.speedMin, T.speedMax) + Math.min(gameTime, CFG.stream.speedRampEnd) * CFG.stream.speedPerSec,
+    speed: rnd(T.speedMin, T.speedMax) + (finale === 'endless'
+              ? (CFG.stream.speedRampEnd + endlessT)        // в эндлесе скорость снова растёт от плато
+              : Math.min(gameTime, CFG.stream.speedRampEnd)) * CFG.stream.speedPerSec,
     pal: 0, // один вид на тип — мобы узнаются по внешности с первого взгляда
     t: rnd(0,10),
     state: 'walk',           // walk | held | fly | stun | offscreen
@@ -1111,7 +1115,7 @@ function tutorialScan(dt){
   }
   // дракон (3-й босс) — ловить фаерболы и метать обратно
   // дракон: тутор не сразу — ждём, пока он въедет и постоит CFG.dragon.tutorialDelay секунд
-  if(dragon && dragon.state === 'fight' && dragon.t >= (CFG.dragon.tutorialDelay ?? 5) &&
+  if(dragons.length && dragons[0].state === 'fight' && dragons[0].t >= (CFG.dragon.tutorialDelay ?? 5) &&
      tutorialTryMessage('dragon', T.dragonTitle, T.dragonSub, 'click')){ msgHi = null; return true; }
   return false;
 }
@@ -1262,14 +1266,15 @@ function tutArrowDown(tx, ty){
 
 function spawnCyclops(opts = {}){
   cyclopes.push({
-    x: W + 10, y: GROUND_Y - CYC_H,
+    x: (opts.x != null ? opts.x : W + 10), y: GROUND_Y - CYC_H,
     hp: CFG.cyclops.hp, t: rnd(0,10), step: 0.8,
     state: 'walk', poundT: 0, eyeFlash: 0, freeze: 0,
     burnT: 0, burnTick: 0, burnFx: 0,
     // деревянное забрало (2-й босс): пока visor>0 — глаз неуязвим, кроме огня
     visor: opts.visor ? CFG.bosses.visorHits : 0,
     visorFlash: 0,
-    boss2: !!opts.visor, // по смерти этого — запускаем дракона
+    // boss2 (по смерти запускает дракона) — ТОЛЬКО для сюжетного забрала, не для бесконечного
+    boss2: !!opts.visor && !opts.endless,
   });
   floatText(W-90, GROUND_Y - CYC_H - 24, opts.visor ? 'ЦИКЛОП В ЗАБРАЛЕ!' : 'ЦИКЛОП!', '#c0392b', 1.6);
 }
@@ -1344,42 +1349,49 @@ function updateBosses(dt){
 }
 
 // поток мобов замирает за wavePause секунд ДО выхода дракона и столько же ПОСЛЕ
+// (только в основной игре — в бесконечном волны не паузим)
 function dragonWavePause(){
+  if(finale === 'endless') return false;
   const w = CFG.dragon.wavePause ?? 5;
   if(boss2Dead && !dragonSpawned && dragonTimer <= w) return true; // вот-вот выйдет
-  if(dragon && dragon.t <= w) return true;                          // только что вышел
+  if(dragons.some(d => d.t <= w)) return true;                      // только что вышел
   return false;
 }
 
-function spawnDragon(){
+// opts.endless — дракон бесконечного режима (по смерти НЕ запускает финал);
+// opts.targetX — куда встать (для пары драконов разносим по x)
+function spawnDragon(opts = {}){
   const D = CFG.dragon;
-  dragon = {
+  const targetX = opts.targetX != null ? opts.targetX : W - DRG_W - D.margin;
+  dragons.push({
     x: W + 60, y: GROUND_Y - DRG_H, hp: D.hp,
     state: 'enter',                 // enter — въезжает к краю; fight — встал и атакует
-    targetX: W - DRG_W - D.margin,
+    targetX,
     t: 0, attackT: D.firstAttackDelay, eyeFlash: 0,
     enrage: false, blink: 0, atkCount: 0,
-  };
+    endless: !!opts.endless,
+  });
   floatText(W - 130, GROUND_Y - DRG_H - 18, 'ДРАКОН!', '#e85b21', 1.8);
   shake = Math.max(shake, 16);
 }
 
 // точка вылета фаербола — пасть дракона (голова сверху-слева в позе «годзиллы»)
-const dragonMouth = () => ({ x: dragon.x + DRG_W*0.12, y: dragon.y + DRG_H*0.15 });
+const dragonMouth = (dr) => ({ x: dr.x + DRG_W*0.12, y: dr.y + DRG_H*0.15 });
 
 function spawnFireball(x, y, vx, vy){
   fireballs.push({ x, y, vx, vy, r: CFG.dragon.fbR, t: 0, hostile: true, held: false, trailT: 0 });
 }
 
-// взрыв вражеского фаербола о землю: вспышка огня + поджигает и ранит мобов в радиусе
+// взрыв вражеского фаербола (о землю или о моба): вспышка + поджигает и ранит мобов в радиусе
 function explodeFireball(fb){
-  const R = 84; // радиус взрыва о землю
-  emitFireParticles(fb.x, GROUND_Y, 18, 1.2);
+  const R = 84;                       // радиус взрыва
+  const ey = Math.min(fb.y, GROUND_Y); // центр взрыва — точка попадания (но не ниже земли)
+  emitFireParticles(fb.x, ey, 18, 1.2);
   shake = Math.max(shake, 7); sfx.thud();
   for(const o of [...demons]){
-    if(o.state==='held' || o.state==='offscreen' || o.state==='burrow' || o.flash>0 || !demons.includes(o)) continue;
+    if(o.state === 'held' || o.state === 'offscreen' || o.state === 'burrow' || o.flash > 0 || !demons.includes(o)) continue;
     const os = sizeOf(o);
-    if(Math.hypot(o.x+os/2 - fb.x, o.y+os/2 - GROUND_Y) <= R + os*0.4){
+    if(Math.hypot(o.x+os/2 - fb.x, o.y+os/2 - ey) <= R + os*0.4){
       igniteDemon(o, 'spread');
       hurt(o, CFG.dragon.mobDmg, 420);
     }
@@ -1388,8 +1400,8 @@ function explodeFireball(fb){
 
 // дракон атакует: чередует три вида (см. CFG.dragon). В ярости каждый второй залп —
 // два быстрых прямых фаербола.
-function dragonAttack(){
-  const D = CFG.dragon, dr = dragon, m = dragonMouth();
+function dragonAttack(dr){
+  const D = CFG.dragon, m = dragonMouth(dr);
   shake = Math.max(shake, 6); sfx.reach();
   let kind;
   if(dr.enrage && (dr.atkCount % 2 === 1)) kind = 'enrage';
@@ -1404,12 +1416,12 @@ function dragonAttack(){
     }
   } else { // enrage: два быстрых прямых с маленькой задержкой
     spawnFireball(m.x, m.y, -D.enrageShot.speed, 0);
-    pendingFB.push({ delay: D.enrageShot.gap, vx: -D.enrageShot.speed, vy: 0 });
+    pendingFB.push({ delay: D.enrageShot.gap, dr, vx: -D.enrageShot.speed, vy: 0 });
   }
 }
 
-function hitDragon(dmg){
-  const dr = dragon; if(!dr) return;
+function hitDragon(dr, dmg){
+  if(!dr || !dragons.includes(dr)) return;
   const D = CFG.dragon;
   dr.hp -= dmg; dr.eyeFlash = D.eyeFlashTime;
   sfx.hurt(); shake = Math.max(shake, 11);
@@ -1430,8 +1442,10 @@ function hitDragon(dmg){
         col: i%2 ? '#e85b21' : '#1f3d24', life:rnd(.6,1.3), size:rnd(3,8)});
     }
     floatText(px, py, 'ПОВЕРЖЕН!!!', '#ffcf3a', 1.8);
-    dragon = null;
-    beginFinale();
+    dragons.splice(dragons.indexOf(dr), 1);
+    score += CFG.cyclops.score * 2; scoreEl.textContent = score; // дракон стоит дорого
+    // финал запускает ТОЛЬКО смерть основного (сюжетного) дракона; в бесконечном — нет
+    if(!dr.endless) beginFinale();
   }
 }
 
@@ -1440,25 +1454,26 @@ function updateDragon(dt){
   for(const pf of [...pendingFB]){
     pf.delay -= dt;
     if(pf.delay <= 0){
-      if(dragon){ const m = dragonMouth(); spawnFireball(m.x, m.y, pf.vx, pf.vy); }
+      if(pf.dr && dragons.includes(pf.dr)){ const m = dragonMouth(pf.dr); spawnFireball(m.x, m.y, pf.vx, pf.vy); }
       pendingFB.splice(pendingFB.indexOf(pf), 1);
     }
   }
-  if(!dragon) return;
-  const D = CFG.dragon, dr = dragon;
-  dr.t += dt;
-  if(dr.eyeFlash > 0) dr.eyeFlash -= dt;
-  if(dr.state === 'enter'){
-    dr.x -= D.enterSpeed * dt;
-    if(dr.x <= dr.targetX){ dr.x = dr.targetX; dr.state = 'fight'; shake = Math.max(shake, 10); }
-    return;
-  }
-  if(dr.enrage) dr.blink += dt;
-  dr.attackT -= dt;
-  if(dr.attackT <= 0){
-    dragonAttack();
-    const j = D.attackJitter;
-    dr.attackT = D.attackEvery * rnd(1 - j*0.5, 1 + j*0.5);
+  const D = CFG.dragon;
+  for(const dr of dragons){
+    dr.t += dt;
+    if(dr.eyeFlash > 0) dr.eyeFlash -= dt;
+    if(dr.state === 'enter'){
+      dr.x -= D.enterSpeed * dt;
+      if(dr.x <= dr.targetX){ dr.x = dr.targetX; dr.state = 'fight'; shake = Math.max(shake, 10); }
+      continue;
+    }
+    if(dr.enrage) dr.blink += dt;
+    dr.attackT -= dt;
+    if(dr.attackT <= 0){
+      dragonAttack(dr);
+      const j = D.attackJitter;
+      dr.attackT = D.attackEvery * rnd(1 - j*0.5, 1 + j*0.5);
+    }
   }
 }
 
@@ -1470,11 +1485,22 @@ function updateFireballs(dt){
     if(fb.held) continue;
     fb.t += dt;
     fb.x += fb.vx * dt; fb.y += fb.vy * dt;
-    // искры-хвост
+    // хвост — дым (как от горящих мобов, но крупнее): поднимается вверх и тает
     fb.trailT -= dt;
-    if(fb.trailT <= 0){ fb.trailT = D.trailEvery; emitFireParticles(fb.x, fb.y, 2, 0.5); }
+    if(fb.trailT <= 0){
+      fb.trailT = D.trailEvery;
+      spawnSmoke(fb.x, fb.y, { dark: 0.5, size0: 18, grow: 24, riseMul: 1.25, life: 1.2 });
+    }
 
     if(fb.hostile){
+      // столкновение с мобом на лету — взрыв на месте (поджиг + урон по площади)
+      let onMob = false;
+      for(const o of [...demons]){
+        if(o.state === 'held' || o.state === 'offscreen' || o.state === 'burrow' || o.flash > 0 || !demons.includes(o)) continue;
+        const os = sizeOf(o);
+        if(Math.hypot(o.x+os/2 - fb.x, o.y+os/2 - fb.y) < fb.r + os*0.45){ onMob = true; break; }
+      }
+      if(onMob){ explodeFireball(fb); fireballs.splice(fireballs.indexOf(fb), 1); continue; }
       // долетел до стены — урон вратам (сколизил по камню), вспышка
       if(fb.x - fb.r <= MOUNTAIN_X){
         if(!gateImmune()){
@@ -1496,9 +1522,10 @@ function updateFireballs(dt){
       }
     } else {
       // возвращённый фаербол: попал в дракона — единственный способ ранить его
-      if(dragon && fb.x > dragon.x + DRG_W*0.08 && fb.x < dragon.x + DRG_W*0.96 &&
-         fb.y > dragon.y + DRG_H*0.02 && fb.y < dragon.y + DRG_H*0.92){
-        hitDragon(D.hitDmg);
+      const drHit = dragons.find(dr => fb.x > dr.x + DRG_W*0.08 && fb.x < dr.x + DRG_W*0.96 &&
+                                       fb.y > dr.y + DRG_H*0.02 && fb.y < dr.y + DRG_H*0.92);
+      if(drHit){
+        hitDragon(drHit, D.hitDmg);
         emitFireParticles(fb.x, fb.y, 16, 1.1);
         fireballs.splice(fireballs.indexOf(fb), 1);
         continue;
@@ -1683,7 +1710,7 @@ function toMainScreen(){
 // (минуя дракона и катарсис-паузу). Потом убрать вместе с кнопкой в index.html.
 function debugStartFinale(){
   if(!running || finale) return; // только во время партии и не повторно
-  won = true; dragon = null;
+  won = true; dragons = [];
   clearMobsCathartic();
   fireballs = []; pendingFB = []; heldFireball = null;
   cv.classList.remove('grabbing');
@@ -1706,8 +1733,38 @@ function startEndless(){
   lvlHud.style.display = '';
   updateXPBar();
   finale = 'endless';
+  // планировщик боссов-пар бесконечного режима: первая пара через endlessBossFirst сек
+  endlessT = 0; endlessBossCount = 0; endlessNextBossAt = CFG.endless.bossFirst;
   running = true;
   music.toCombat();
+}
+
+// ── бесконечный режим: эскалация + цикл боссов парами ──
+// Боссы идут парами по кругу (циклоп → циклоп с забралом → дракон), интервал между
+// парами сжимается: bossGap1 (60с) для первого круга, bossGap2 (30с), дальше bossGap3 (15с).
+// Мобы при этом идут обычным потоком (см. спавн), а сложность снова растёт (см. эскалацию).
+const ENDLESS_BOSS_SEQ = ['cyclops', 'visor', 'dragon'];
+function updateEndlessBosses(){
+  const E = CFG.endless;
+  if(endlessT < endlessNextBossAt) return;
+  const kind = ENDLESS_BOSS_SEQ[endlessBossCount % ENDLESS_BOSS_SEQ.length];
+  spawnBossPair(kind);
+  endlessBossCount++;
+  // интервал до следующей пары: первый круг — реже, дальше всё чаще
+  const gap = endlessBossCount < 3 ? E.bossGap1 : endlessBossCount < 6 ? E.bossGap2 : E.bossGap3;
+  endlessNextBossAt = endlessT + gap;
+}
+function spawnBossPair(kind){
+  if(kind === 'cyclops'){
+    spawnCyclops({ endless: true, x: W + 10 });
+    spawnCyclops({ endless: true, x: W + 10 + CYC_W + 40 }); // второй чуть правее (за экраном)
+  } else if(kind === 'visor'){
+    spawnCyclops({ visor: true, endless: true, x: W + 10 });
+    spawnCyclops({ visor: true, endless: true, x: W + 10 + CYC_W + 40 });
+  } else { // дракон — всегда ОДИН (не пара)
+    const D = CFG.dragon;
+    spawnDragon({ endless: true, targetX: W - DRG_W - D.margin });
+  }
 }
 
 // ── поток врагов ───────────────────────────────────────────────────
@@ -1742,8 +1799,11 @@ function pickStreamType(){
   const seen = unlocked.filter(e => seenTypes.has(e.type));
   const w = [];
   let total = 0;
-  // вес типа растёт со временем, но не дольше weightGrowEnd — после этого микс мобов плато
-  const tw = Math.min(gameTime, CFG.stream.weightGrowEnd);
+  // вес типа растёт со временем, но не дольше weightGrowEnd — после этого микс мобов плато.
+  // В бесконечном режиме плато снимается: вес продолжает расти от плато + время в эндлесе.
+  const tw = finale === 'endless'
+    ? CFG.stream.weightGrowEnd + endlessT
+    : Math.min(gameTime, CFG.stream.weightGrowEnd);
   for(const e of seen){
     const ww = e.weight + e.grow * Math.max(0, tw - e.from);
     w.push(ww); total += ww;
@@ -1756,6 +1816,10 @@ function pickStreamType(){
 // текущий интервал спавна: от startEvery к minEvery за rampTime секунд
 function curSpawnEvery(){
   const S = CFG.stream;
+  // бесконечный режим: интервал снова сжимается со временем (плотность растёт), до жёсткого пола
+  if(finale === 'endless'){
+    return Math.max(CFG.endless.minEvery, S.minEvery - endlessT * CFG.endless.densityPerSec);
+  }
   const k = Math.min(1, gameTime / S.rampTime);
   const base = S.startEvery + (S.minEvery - S.startEvery) * k;
   if(!boss1Spawned) return base * S.preCyclopsSpawnMul;
@@ -2039,7 +2103,7 @@ function debugSpawnBoss(kind){
   } else if(kind === 'visor'){
     spawnCyclops({ visor: true });
   } else if(kind === 'dragon'){
-    dragon = null; fireballs = []; pendingFB = []; heldFireball = null;
+    dragons = []; fireballs = []; pendingFB = []; heldFireball = null;
     spawnDragon();
   }
 }
@@ -2679,6 +2743,8 @@ function update(dt){
   if(th !== threat) threat = th;
   // финал после смерти дракона (катарсис → ворон → орда → молнии Тора → победа)
   if(finale) updateFinale(dt);
+  // бесконечный режим: копим время (для эскалации) и крутим цикл боссов-пар
+  if(finale === 'endless'){ endlessT += dt; updateEndlessBosses(); }
   // обычный поток мобов: идёт в обычной игре и в бесконечном режиме, но НЕ во время
   // финальных сцен (пауза-катарсис, орда, молнии — там спавном рулит финал)
   if(!debugLocation && (!finale || finale === 'endless')){
@@ -3889,8 +3955,10 @@ function drawVisor(c){
 // дракон (3-й босс) — рисуется процедурно (контуры). Стоит у правого края, мордой влево.
 let _dragonRed = null; // красная перекраска спрайта дракона (для мерцания в ярости), кэш
 function drawDragon(){
-  if(!dragon) return;
-  const dr = dragon, D = CFG.dragon;
+  for(const dr of dragons) drawOneDragon(dr);
+}
+function drawOneDragon(dr){
+  const D = CFG.dragon;
   const bx = dr.x, by = dr.y, w = DRG_W, h = DRG_H, t = last*0.001;
   const breath = Math.sin(t*1.6) * 3;
   // тень на земле
@@ -4351,7 +4419,7 @@ function start({ skipTutorial = false, skipDialogue = false, debug = false } = {
   demons=[]; puddles=[]; particles=[]; cyclopes=[]; shockwaves=[]; blasts=[];
   bolts=[]; boulders=[]; windStreaks=[]; shots=[]; tornadoes=[]; heldBoulder=null; skyFlash=0;
   // боссы, дракон и финал
-  fireballs=[]; pendingFB=[]; heldFireball=null; dragon=null; braziersLit=false;
+  fireballs=[]; pendingFB=[]; heldFireball=null; dragons=[]; braziersLit=false;
   boss1Spawned=false; boss2Spawned=false; boss2Dead=false;
   dragonSpawned=false; dragonTimer=0; dragonRoared=false; won=false;
   finale=null; finaleT=0; gateInvuln=false;
