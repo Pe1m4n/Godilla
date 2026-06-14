@@ -16,6 +16,16 @@ const SFX_CFG = {
   tap:   { name: 'finger-tap',              vol: 1.0,  pitchJitter: 0.08 }, // нажатие любой кнопки UI
   lightning: { name: 'lightning', vol: 0.85, pitchJitter: 0.07, trim: 1.0 }, // разряд: стартуем с 1-й секунды файла
   tornado:   { name: 'wind',      vol: 1.2375, pitchJitter: 0.05, trim: 1.0, fadeOut: 2.0 }, // ветер: старт с 1с + огибающая
+  // падение: бесшовная PING-PONG петля по СЕРЕДИНЕ файла (loopFrom..loopTo — доли 0..1).
+  // Сегмент проигрывается вперёд, затем задом наперёд — в точках разворота сэмплы
+  // совпадают, поэтому стыка нет вообще (работает для любого материала, в т.ч. свипов).
+  falling:   { name: 'Falling',   vol: 0.5,  pitchJitter: 0.1, fadeIn: 0.08, fadeOut: 0.12,
+               loopFrom: 0.4, loopTo: 0.62, pingpong: true },
+  // фитиль бомбера: шипит петлёй, пока моб жив (ping-pong средней части — без стыка)
+  fuse:    { name: 'fuse',      vol: 0.4,  pitchJitter: 0.05, fadeIn: 0.05, fadeOut: 0.1,
+             loopFrom: 0.12, loopTo: 0.88, pingpong: true },
+  // взрыв бомбера при гибели (одиночный)
+  explode: { name: 'explosion', vol: 0.7,  pitchJitter: 0.08 },
   // удар: несколько вариаций сэмпла (разный питч/тембр) — берём случайную, плюс
   // питч ещё подкручивается силой удара. Файлы уже обрезаны от тишины в начале.
   slap:  { names: ['slap_1', 'slap_2', 'slap_3', 'slap_4'],
@@ -43,6 +53,7 @@ let masterVol = 1;    // общий множитель громкости зву
 try { const s = localStorage.getItem('godilla.masterVol'); if(s !== null) masterVol = Math.max(0, Math.min(1, parseFloat(s) || 0)); } catch(e){}
 try { muted = localStorage.getItem('godilla.sfxMuted') === '1'; } catch(e){}
 const buffers = {};   // имя → декодированный AudioBuffer (заполняется асинхронно)
+const loopBuffers = {}; // имя → предсобранный бесшовный буфер для петли (кэш)
 
 export function toggleMute(){ muted = !muted; return muted; }
 export function setMuted(b){ muted = b; }           // мут звуков (отдельно от музыки)
@@ -133,6 +144,90 @@ function playFadedSample(name, {
   return true;
 }
 
+// строит PING-PONG буфер для петли: сегмент [fromFrac..toFrac] исходника проигрывается
+// вперёд, затем задом наперёд (без дублей на концах). В обеих точках разворота соседние
+// сэмплы совпадают по значению, поэтому петля бесшовна для любого материала. Кэшируется.
+function getLoopBuffer(name, ac, fromFrac, toFrac){
+  if(loopBuffers[name]) return loopBuffers[name];
+  const buf = buffers[name];
+  if(!buf) return null;
+  const sr = buf.sampleRate, ch = buf.numberOfChannels;
+  const start = Math.floor(buf.length * clamp(fromFrac, 0, 1));
+  const end   = Math.floor(buf.length * clamp(toFrac, 0, 1));
+  const N = end - start;
+  if(N < 64) return null;
+  const M = 2 * N - 2;                   // вперёд (N) + назад без концов (N-2)
+  const out = ac.createBuffer(ch, M, sr);
+  for(let c = 0; c < ch; c++){
+    const inD = buf.getChannelData(c);
+    const outD = out.getChannelData(c);
+    for(let i = 0; i < N; i++) outD[i] = inD[start + i];              // вперёд: s[0..N-1]
+    for(let i = 1; i < N - 1; i++) outD[N - 1 + i] = inD[start + N - 1 - i]; // назад: s[N-2..1]
+  }
+  loopBuffers[name] = out;
+  return out;
+}
+
+function playLoopHandle(name, {
+  vol = 0.6,
+  rate = 1,
+  jitter = 0,
+  fadeIn = 0.05,
+  fadeOut = 0.1,
+  trim = 0,
+  loopFrom = 0,   // доля файла, с которой начинается петля (0..1)
+  loopTo = 0,     // доля файла, на которой петля заворачивается; 0 — петля по всему файлу
+  pingpong = false, // true — бесшовная ping-pong петля среднего сегмента (вперёд+назад)
+} = {}){
+  if(muted) return null;
+  const ac = ctx();
+  if(!ac) return null;
+  let buf = buffers[name];
+  if(!buf) return null;
+  // бесшовная петля: один раз строим ping-pong буфер сегмента и крутим его целиком
+  let seamless = false;
+  if(pingpong && loopTo > loopFrom){
+    const lb = getLoopBuffer(name, ac, loopFrom, loopTo);
+    if(lb){ buf = lb; seamless = true; }
+  }
+  const src = ac.createBufferSource();
+  const g = ac.createGain();
+  let stopped = false;
+  src.buffer = buf;
+  src.loop = true;
+  src.playbackRate.value = Math.max(0.05, rate * (1 + (jitter ? rnd(-jitter, jitter) : 0)));
+  let startOff = clamp(trim, 0, Math.max(0, buf.duration - 0.05));
+  if(seamless){
+    startOff = 0;                 // весь буфер уже и есть бесшовная петля
+  } else if(loopTo > loopFrom){   // запасной вариант: нативная петля по среднему сегменту
+    src.loopStart = buf.duration * clamp(loopFrom, 0, 1);
+    src.loopEnd   = buf.duration * clamp(loopTo, 0, 1);
+    startOff = src.loopStart;
+  }
+  const now = ac.currentTime;
+  const peak = vol * masterVol;
+  g.gain.setValueAtTime(0.001, now);
+  g.gain.linearRampToValueAtTime(Math.max(0.001, peak), now + Math.max(0.01, fadeIn));
+  src.connect(g).connect(ac.destination);
+  src.start(now, startOff);
+  return {
+    setRate(nextRate){
+      if(stopped) return;
+      const t = ac.currentTime;
+      src.playbackRate.setTargetAtTime(Math.max(0.05, nextRate), t, 0.05);
+    },
+    stop(){
+      if(stopped) return;
+      stopped = true;
+      const t = ac.currentTime;
+      g.gain.cancelScheduledValues(t);
+      g.gain.setValueAtTime(Math.max(0.001, g.gain.value), t);
+      g.gain.linearRampToValueAtTime(0.001, t + Math.max(0.02, fadeOut));
+      try{ src.stop(t + Math.max(0.02, fadeOut) + 0.03); }catch(e){}
+    },
+  };
+}
+
 function beep(freq, dur, type = 'square', vol = 0.08){
   if(muted) return;
   const ac = ctx();
@@ -195,4 +290,31 @@ export const sfx = {
     }
   },
   wind:  (duration) => sfx.tornado(duration),
+  falling: (rate = 1) => {
+    const C = SFX_CFG.falling;
+    return playLoopHandle(C.name, {
+      vol: C.vol,
+      rate,
+      jitter: C.pitchJitter,
+      fadeIn: C.fadeIn,
+      fadeOut: C.fadeOut,
+      loopFrom: C.loopFrom,
+      loopTo: C.loopTo,
+      pingpong: C.pingpong,
+    });
+  },
+  // фитиль бомбера: возвращает хэндл петли ({setRate, stop}) — звучит, пока моб жив
+  fuse: () => {
+    const C = SFX_CFG.fuse;
+    return playLoopHandle(C.name, {
+      vol: C.vol, rate: 1, jitter: C.pitchJitter,
+      fadeIn: C.fadeIn, fadeOut: C.fadeOut,
+      loopFrom: C.loopFrom, loopTo: C.loopTo, pingpong: C.pingpong,
+    });
+  },
+  // взрыв бомбера (одиночный сэмпл; если не догрузился — запасные beep как у boom)
+  explode: () => {
+    const C = SFX_CFG.explode;
+    if(!playSample(C.name, C.vol, 1, C.pitchJitter)){ beep(120, .25, 'sawtooth', .12); beep(60, .35, 'triangle', .1); }
+  },
 };

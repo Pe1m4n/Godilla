@@ -270,6 +270,7 @@ function bloodSprite(size, col){
 
 // ── состояние ──────────────────────────────────────────────────────
 let demons = [], puddles = [], particles = [], cyclopes = [], shockwaves = [];
+let blasts = []; // огненные шары-вспышки (взрыв бомбера): {x,y,r,max,life,maxLife}
 let bolts = [], boulders = [], windStreaks = [], shots = [], tornadoes = [];
 let heldBoulder = null; // отобранный у носильщика валун в руке: {x, y}
 // ── боссы (последовательность из трёх) ──
@@ -369,6 +370,8 @@ function spawnDemon(type){
     swingVX: 0, swingVY: 0,  // вектор скорости в момент пика — для броска, если курсор уже притормозил
     walled: false,           // уже упёрся в стену замка (защита от стука каждый кадр)
     roofed: false,           // уже лежит/упёрся в крышу башни
+    scream: null,            // loop-звук падения, пока моб летит после ручного броска
+    fuseSnd: null,           // loop-звук фитиля у бомбера (звучит, пока жив)
     burnT: 0, burnTick: 0, burnFx: 0, fireBurstReady: false,
     hasBoulder: type === 'roller', // носильщик идёт с валуном, пока его не отобрали
     flip: Math.random()<.5,
@@ -381,8 +384,56 @@ function spawnDemon(type){
   }
   if(T.burrow){ d.state = 'burrow'; }                            // стартует под землёй
   if(T.fireEvery){ d.fireT = T.fireEvery * rnd(.4, 1); }         // дальний — таймер выстрела
+  if(type === 'bomber'){ d.fuseSnd = sfx.fuse(); }               // фитиль шипит, пока бомбер жив
   demons.push(d);
   return d;
+}
+
+function screamBaseRate(d){
+  const px = TYPES[d.type].px;
+  const bySize = Math.max(0.42, Math.min(3.1, 12 / Math.pow(px, 1.55)));
+  const typeMul = d.type === 'dog' || d.type === 'wisp' || d.type === 'small' ? 1.18 :
+    d.type === 'huge' ? 0.78 : 1;
+  return bySize * typeMul;
+}
+
+function screamRate(d){
+  const doppler = Math.max(0.72, Math.min(1.28, 1 + (-d.vx / 1300)));
+  return screamBaseRate(d) * doppler;
+}
+
+const SCREAMS_ENABLED = false; // крики мобов при падении временно отключены
+
+function startDemonScream(d){
+  if(!SCREAMS_ENABLED) return;   // временно отключено
+  if(d.scream || d.type === 'titan') return;
+  d.scream = sfx.falling(screamRate(d));
+}
+
+function stopDemonScream(d){
+  if(!d || !d.scream) return;
+  d.scream.stop();
+  d.scream = null;
+}
+
+// заглушить фитиль бомбера (зовётся при его удалении: гибель / врата / заброс в город)
+function stopFuse(d){
+  if(!d || !d.fuseSnd) return;
+  d.fuseSnd.stop();
+  d.fuseSnd = null;
+}
+
+function stopAllDemonScreams(){
+  for(const d of demons){ stopDemonScream(d); stopFuse(d); }
+}
+
+function updateDemonScream(d){
+  if(!d.scream) return;
+  if(d.state !== 'fly'){
+    stopDemonScream(d);
+  } else {
+    d.scream.setRate(screamRate(d));
+  }
 }
 
 // моб, переживший вылет за край экрана, заходит в бой заново справа (ХП уже снижено при вылете)
@@ -396,6 +447,7 @@ function returnFromOffscreen(d){
 }
 
 function sendOffscreen(d){
+  stopDemonScream(d);
   d.armed = false; d.noEyeDmg = false; d.hitsLeft = 0;
   hurt(d, CFG.offscreen.dmg, 0);
   if(!demons.includes(d)) return false; // не пережил вылет — погиб
@@ -677,6 +729,8 @@ function hurt(d, dmg, sp){
 }
 
 function splat(d, sp){
+  stopDemonScream(d);
+  stopFuse(d);
   sfx.splat();
   shake = Math.min(TYPES[d.type].shakeSplat, 6 + sp/120);
   stats.kills[d.type] = (stats.kills[d.type] || 0) + 1; stats.killsTotal++;
@@ -730,12 +784,16 @@ function splat(d, sp){
 // взрыв бомбера: урон по площади всем мобам рядом (возможна цепная реакция)
 function bomberBoom(x, y){
   const T = TYPES.bomber;
-  sfx.boom();
+  sfx.explode();
   shake = Math.max(shake, 12);
+  // фаербол-вспышка + ударная волна
+  blasts.push({ x, y, r: 0, max: T.boomR * 1.15, life: 0.4, maxLife: 0.4 });
   shockwaves.push({x, y: GROUND_Y, r: 10, max: T.boomR, life: .4});
-  for(let i = 0; i < 24; i++){
-    particles.push({x, y, vx:rnd(-300,300), vy:rnd(-460,-40),
-      col: i%2 ? '#ffcf3a' : '#c0392b', life:rnd(.3,.7), size:rnd(2,5)});
+  // огненные искры + разлетающиеся ошмётки
+  emitFireParticles(x, y, 22, 1.3);
+  for(let i = 0; i < 30; i++){
+    particles.push({x, y, vx:rnd(-380,380), vy:rnd(-520,-40),
+      col: i%3===0 ? '#2a2024' : (i%2 ? '#ffcf3a' : '#e85b21'), life:rnd(.3,.8), size:rnd(2,6)});
   }
   for(const o of [...demons]){
     if(o.state==='held' || o.state==='offscreen' || o.state==='burrow' || !demons.includes(o)) continue;
@@ -746,6 +804,7 @@ function bomberBoom(x, y){
 
 function reachMountain(d){
   sfx.reach();
+  stopFuse(d);
   // финал: врата неуязвимы — моб разбивается о стену, урона вратам нет
   if(gateInvuln){
     shake = Math.max(shake, 5);
@@ -773,6 +832,7 @@ function reachMountain(d){
 // Врата получают ДВОЙНОЙ урон, который этот моб нанёс бы им у стены.
 function cityBreach(d){
   sfx.reach();
+  stopFuse(d);
   // финал: врата неуязвимы — моб улетел в город, но урона вратам нет
   if(gateInvuln){ demons.splice(demons.indexOf(d),1); return; }
   stats.cityBreaches++;
@@ -856,6 +916,7 @@ function tutorialGrab(p){
     floatText(d.x+s/2, d.y-10, 'ВАЛУН!', '#7e828c', 1);
   } else {
     held = d; d.state='held'; d.rotV=0; d.grounded=false; d.noDmg=false; d.swing=0; d.walled=false;
+    stopDemonScream(d);
   }
   cv.classList.add('grabbing'); sfx.grab();
   dismissTutorialMessage();
@@ -1203,6 +1264,7 @@ function skyLightningKill(){
 }
 
 function explodeTitan(d){
+  stopDemonScream(d); stopFuse(d);
   const s = sizeOf(d), px = d.x + s/2, py = d.y + s/2;
   emitFireParticles(px, py, 20, 1.4);
   const col = bloodCol(d.type);
@@ -1239,6 +1301,7 @@ function updateFinale(dt){
 // общий помощник: погасить игру и показать оверлей
 function stopForOverlay(){
   logSession();
+  stopAllDemonScreams();
   debugLocation = false;
   setDebugPanelVisible(false);
   running = false; held = null; heldBoulder = null; heldFireball = null;
@@ -1814,6 +1877,7 @@ function onDown(e){
       if(dist < gr){
         rememberAirHome(d);
         held = d; d.state='held'; d.rotV = 0;
+        stopDemonScream(d);
         d.grounded = false; d.noDmg = false; d.swing = 0; d.walled = false; d.roofed = false;
         cv.classList.add('grabbing');
         sfx.grab();
@@ -1885,6 +1949,7 @@ function onDown(e){
   if(best){
     rememberAirHome(best);
     held = best; best.state='held'; best.rotV = 0;
+    stopDemonScream(best);
     best.grounded = false; best.noDmg = false;
     best.swing = 0; best.walled = false; best.roofed = false;
     cv.classList.add('grabbing');
@@ -1968,6 +2033,7 @@ function onUp(){
     held.armed = true; // заряжен до первого касания земли
     held.noEyeDmg = false; // запрет от торнадо не переносится на ручной бросок
     held.hitsLeft = sk('collide'); // без «Тарана» столкновения безвредны
+    if(releaseSpeed > 260 && Math.random() < 0.45) startDemonScream(held);
     sfx.throw();
     held = null;
   }
@@ -2151,6 +2217,7 @@ function update(dt){
 
   for(const d of [...demons]){
     if(!demons.includes(d)) continue;
+    updateDemonScream(d);
     d.t += dt;
     if(d.flash > 0) d.flash -= dt;
     if(d.cycHit > 0) d.cycHit -= dt;
@@ -2382,6 +2449,7 @@ function update(dt){
 
       // ── крыша башни: прилетел сверху — стукается как об землю ──
       if(hitsTowerRoofFromAbove(d, s, py0)){
+        stopDemonScream(d);
         d.y = TOWER_ROOF.y - s;
         const sp = Math.hypot(d.vx, d.vy);
         const wasArmed = d.armed;
@@ -2405,6 +2473,7 @@ function update(dt){
       // ── стена замка: прилетел справа ниже кромки — стукается как об землю ──
       // (выше кромки — пролетает и может упасть уже в защищаемой зоне)
       if(d.x < WALL.x && d.y + s > WALL.top && px0 >= WALL.x){
+        stopDemonScream(d);
         d.x = WALL.x;
         const sp = Math.hypot(d.vx, d.vy);
         sfx.slap(sp); // удар мобом о стену замка — по скорости
@@ -2421,6 +2490,7 @@ function update(dt){
       }
 
       if(d.y + s >= GROUND_Y){
+        stopDemonScream(d);
         d.y = GROUND_Y - s;
         sfx.slap(Math.hypot(d.vx, d.vy)); // удар мобом о землю — по скорости падения
         if(d.noDmg){
@@ -2611,6 +2681,11 @@ function update(dt){
     wv.life -= dt;
     if(wv.life <= 0) shockwaves.splice(shockwaves.indexOf(wv),1);
   }
+  for(const bl of [...blasts]){
+    bl.r += (bl.max - bl.r) * Math.min(1, dt*14); // быстро раздувается
+    bl.life -= dt;
+    if(bl.life <= 0) blasts.splice(blasts.indexOf(bl),1);
+  }
   for(const pl of [...puddles]){
     if(pl.r < pl.max) pl.r += dt*60;
     pl.life -= dt*0.012;
@@ -2731,6 +2806,21 @@ function draw(){
     cx.beginPath();
     cx.ellipse(wv.x, wv.y+2, wv.r, wv.r*0.3, 0, 0, Math.PI*2);
     cx.stroke();
+    cx.globalAlpha = 1;
+  }
+  // огненные шары взрыва: раскалённое ядро → жёлтый → оранжевый, аддитивно
+  for(const bl of blasts){
+    const a = Math.max(0, bl.life / bl.maxLife);
+    const r = Math.max(1, bl.r);
+    const g = cx.createRadialGradient(bl.x, bl.y, 0, bl.x, bl.y, r);
+    g.addColorStop(0,    `rgba(255,255,238,${0.95*a})`);
+    g.addColorStop(0.35, `rgba(255,205,72,${0.85*a})`);
+    g.addColorStop(0.7,  `rgba(232,91,33,${0.5*a})`);
+    g.addColorStop(1,    'rgba(232,91,33,0)');
+    cx.globalCompositeOperation = 'lighter';
+    cx.fillStyle = g;
+    cx.beginPath(); cx.arc(bl.x, bl.y, r, 0, Math.PI*2); cx.fill();
+    cx.globalCompositeOperation = 'source-over';
     cx.globalAlpha = 1;
   }
 
@@ -3649,7 +3739,8 @@ sfxBtn.addEventListener('click', () => {
 //   debug — пустая локация с ручными кнопками спавна
 function start({ skipTutorial = false, skipDialogue = false, debug = false } = {}){
   debugLocation = !!debug;
-  demons=[]; puddles=[]; particles=[]; cyclopes=[]; shockwaves=[];
+  stopAllDemonScreams();
+  demons=[]; puddles=[]; particles=[]; cyclopes=[]; shockwaves=[]; blasts=[];
   bolts=[]; boulders=[]; windStreaks=[]; shots=[]; tornadoes=[]; heldBoulder=null; skyFlash=0;
   // боссы, дракон и финал
   fireballs=[]; pendingFB=[]; heldFireball=null; dragon=null; braziersLit=false;
@@ -3730,6 +3821,7 @@ function gameOver(){
     return;
   }
   logSession();
+  stopAllDemonScreams();
   debugLocation = false;
   setDebugPanelVisible(false);
   running = false; held = null; heldBoulder = null; heldFireball = null;
