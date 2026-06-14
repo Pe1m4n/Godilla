@@ -59,6 +59,16 @@
   <!-- ВРЕМЕННАЯ дебаг-кнопка: неуязвимость замка вкл/выкл (по умолчанию выкл) -->
   <button id="godGateBtn" class="hidden" title="DEBUG: неуязвимый замок (вкл/выкл)">🛡 Замок: уязвим</button>
   <button id="settingsBtn" title="Настройки">⚙</button>
+  <!-- зал славы: открывается в главном меню кнопкой-кубком (зеркально шестерёнке) -->
+  <button id="trophyBtn" title="Зал славы" aria-label="Зал славы">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 4h10v4a5 5 0 0 1-10 0z"/>
+      <path d="M7 5H4v2a3 3 0 0 0 3 3"/>
+      <path d="M17 5h3v2a3 3 0 0 1-3 3"/>
+      <path d="M12 13v3"/>
+      <path d="M9.5 20h5l-.5-3.5h-4z"/>
+    </svg>
+  </button>
   <!-- модалка настроек: открывается по шестерёнке, ставит игру на паузу -->
   <div id="settingsPanel" class="hidden">
     <div id="settingsBox">
@@ -117,6 +127,22 @@
     <h1>Новый уровень!</h1>
     <p>Выбери, что прокачать:</p>
     <div id="skillCards"></div>
+  </div>
+  <!-- зал славы: таблица рекордов + ввод имени. Цвета окна победы. -->
+  <div id="leaderboardPanel" class="hidden">
+    <div id="lb-box">
+      <h1 id="lb-title">Чертог славы</h1>
+      <div id="lb-entry" class="hidden">
+        <p id="lb-entry-text">Высеки своё имя среди героев Асгарда:</p>
+        <div id="lb-entry-row">
+          <input id="lb-name" type="text" maxlength="16" placeholder="Твоё имя" autocomplete="off" spellcheck="false">
+          <button id="lb-save">Высечь</button>
+        </div>
+      </div>
+      <ol id="lb-list"></ol>
+      <p id="lb-empty" class="hidden">Пока никто не вписал своё имя. Будь первым!</p>
+      <button id="lb-close">В главное меню</button>
+    </div>
   </div>
 </div>
 <div id="grain"></div>

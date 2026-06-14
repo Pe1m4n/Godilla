@@ -129,10 +129,11 @@ export function tutorialTick(dt){
 // Показать одноразовое модальное сообщение (раз за партию, по ключу). Замораживает мир.
 // dismiss: 'click' — любой клик закрывает; 'grab' — закрытие делает game.js при захвате цели.
 // true = показали; false = выключено / уже идёт обучение / уже показывали этот ключ.
-export function tutorialTryMessage(key, title, sub, dismiss = 'click'){
+export function tutorialTryMessage(key, title, sub, dismiss = 'click', top = '40%'){
   if(!enabledThisRun || active || msgActive || shownOnce.has(key)) return false;
   shownOnce.add(key);
   msgKey = key; msgDismiss = dismiss; msgT = 0;
+  if(msgEl) msgEl.style.top = top; // по умолчанию по центру (40%); можно опустить ниже
   if(msgTitleEl) msgTitleEl.textContent = title || ''; // перенос — CSS text-wrap:balance
   if(msgSubEl){ msgSubEl.textContent = sub || ''; msgSubEl.style.display = sub ? 'block' : 'none'; }
   msgActive = true; showMsg(true);
