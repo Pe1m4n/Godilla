@@ -53,11 +53,9 @@
       <div id="hpbar"><div id="hpfill"></div></div>
     </div>
   </div>
-  <!-- ВРЕМЕННЫЙ дебаг-таймер боя: идёт только когда игра не на паузе (потом убрать) -->
+  <!-- таймер боя: идёт только когда игра не на паузе -->
   <div id="debugTimer" class="hidden">0:00</div>
   <button id="pauseBtn" class="hidden" title="Пауза">⏸</button>
-  <!-- ВРЕМЕННАЯ дебаг-кнопка: неуязвимость замка вкл/выкл (по умолчанию выкл) -->
-  <button id="godGateBtn" class="hidden" title="DEBUG: неуязвимый замок (вкл/выкл)">🛡 Замок: уязвим</button>
   <button id="settingsBtn" title="Настройки">♫</button>
   <!-- зал славы: открывается в главном меню кнопкой-кубком (зеркально шестерёнке) -->
   <button id="trophyBtn" title="Зал славы" aria-label="Зал славы">
@@ -104,7 +102,8 @@
       </div>
       <div id="letter-buttons">
         <button id="startWallBtn">Защищать Асгард</button>
-        <button id="startWallDebugBtn" class="debug-btn" title="Отладка: пропустить вступительный диалог и обучение">Начать без диалогов и туторов</button>
+        <!-- появляется только после того, как игрок впервые дошёл до бесконечного режима -->
+        <button id="startWallDebugBtn" class="debug-btn hidden" title="Пропустить вступительный диалог и обучение">Начать без диалогов и туторов</button>
       </div>
     </div>
     <!-- пылинки в лучах — слой поверх письма; прячется вместе со #startScreen после старта -->
@@ -118,12 +117,12 @@
       <div class="bigscore hidden" id="ov-score"></div>
       <div id="ov-buttons">
         <button id="startBtn">Начать заново</button>
-        <button id="startNoTutBtn">Начать заново без тутора</button>
-        <button id="startNoNarrativeBtn">Начать заново без тутора и диалогов</button>
       </div>
       <div id="ov-win-buttons" class="hidden">
-        <button id="leaveNameBtn">Оставить своё имя в чертогах Одина</button>
         <button id="endlessBtn">Бесконечный режим</button>
+        <button id="toMenuBtn">Выйти в меню</button>
+        <!-- только на экране гибели в бесконечном режиме (зал славы) -->
+        <button id="leaveNameBtn">Оставить своё имя в чертогах Одина</button>
       </div>
     </div>
   </div>
@@ -152,9 +151,6 @@
 <div id="grain"></div>
 <!-- чёрная шторка перехода: затемняет меню и проявляет игру (см. startWithFade) -->
 <div id="fade"></div>
-<button id="fsBtn" title="Полный экран">⛶</button>
-<!-- ВРЕМЕННАЯ дебаг-кнопка: запускает финал с диалога ворона (потом убрать) -->
-<button id="debugFinaleBtn" title="DEBUG: запустить финал">▶ ФИНАЛ</button>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

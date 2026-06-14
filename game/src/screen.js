@@ -18,18 +18,4 @@ function fit(){
 window.addEventListener('resize', fit);
 document.addEventListener('fullscreenchange', fit);
 fit();
-
-// ── временная кнопка «полный экран» ──
-// На itch.io есть встроенная кнопка (галка «Enable fullscreen button» при загрузке),
-// поэтому в релизе эту можно убрать. Нужна, чтобы проверять полный экран локально.
-const fsBtn = document.getElementById('fsBtn');
-if(fsBtn){
-  fsBtn.addEventListener('click', () => {
-    if(document.fullscreenElement){
-      document.exitFullscreen();
-    } else {
-      document.documentElement.requestFullscreen?.();
-    }
-    fsBtn.blur();
-  });
-}
+// Полноэкранный режим — через встроенную кнопку itch.io (галка «Enable fullscreen button»).

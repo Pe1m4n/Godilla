@@ -443,11 +443,7 @@ let finale = null, finaleT = 0;
 let endlessT = 0, endlessBossCount = 0, endlessNextBossAt = 0;
 // врата неуязвимы от смерти дракона до момента, когда молнии Тора выкосят всю орду
 let gateInvuln = false;
-// ДЕБАГ: тумблер «неуязвимый замок» (кнопка рядом с паузой). По умолчанию выкл.
-// Не сбрасывается при рестарте — выбор отладчика держится между партиями.
-let debugGodGate = false;
-// врата не получают урон: финальная неуязвимость ИЛИ включён дебаг-тумблер
-function gateImmune(){ return gateInvuln || debugGodGate; }
+function gateImmune(){ return gateInvuln; }
 // размеры спрайта дракона приходят из пиксельной карты (DRAGON_MAP/DRG_W/DRG_H в config.js)
 // данные законсервированной панели заклинаний (см. drawSpellUI — сейчас не вызывается)
 let spellSlots = [{id:'lightning', cd:0}, {id:'boulder', cd:0}, {id:'wind', cd:0}];
@@ -470,6 +466,7 @@ const TUTORIAL_DEBUT_TYPES = new Set(['big', 'caster', 'mole', 'roller']);
 // одноразовые события срежиссированного начала (см. updateIntroScript / CFG.intro)
 let introPackDone = false, introSwirlDone = false, introHugeDone = false, introCloudDone = false;
 let rollerDebutT = 0; // >0 — идёт спец-дебют роллера: отсчёт до выхода самого роллера на экран
+let lastRollerAt = -999; // когда последний раз вышел роллер (для кулдауна в бесконечном режиме)
 const FIRE_PERKS = new Set(['pyro', 'inferno', 'wildfire', 'emberSmash', 'stormConduit', 'wildSpread', 'fireVortex', 'infernoThrow', 'ashSlam']);
 let player = { level: 0, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
 let pendingLevels = 0, choosing = false;
@@ -1338,13 +1335,19 @@ function updateBosses(dt){
   } else if(boss1Spawned && !boss2Spawned && gameTime >= CFG.bosses.visorAt && cyclopes.length === 0){
     spawnCyclops({ visor: true }); boss2Spawned = true;
   }
-  if(boss2Dead && !dragonSpawned){
-    dragonTimer -= dt;
-    if(!dragonRoared && dragonTimer <= (CFG.dragon.roarLead ?? 2)){
+  // дракон выходит ЖЁСТКО в CFG.bosses.dragonAt (4:30), независимо от 2-го босса
+  if(!dragonSpawned){
+    const left = CFG.bosses.dragonAt - gameTime;
+    if(!dragonRoared && left <= (CFG.dragon.roarLead ?? 2)){
       dragonRoared = true;
       sfx.dragonRoar();
     }
-    if(dragonTimer <= 0){ spawnDragon(); dragonSpawned = true; }
+    if(left <= 0){
+      // если 2-й босс ещё на сцене — убираем недобитого, чтобы не было двух боссов разом
+      if(cyclopes.length) cyclopes.length = 0;
+      boss2Dead = true;              // для согласованности финала/пауз волн
+      spawnDragon(); dragonSpawned = true;
+    }
   }
 }
 
@@ -1353,7 +1356,7 @@ function updateBosses(dt){
 function dragonWavePause(){
   if(finale === 'endless') return false;
   const w = CFG.dragon.wavePause ?? 5;
-  if(boss2Dead && !dragonSpawned && dragonTimer <= w) return true; // вот-вот выйдет
+  if(!dragonSpawned && (CFG.bosses.dragonAt - gameTime) <= w) return true; // вот-вот выйдет
   if(dragons.some(d => d.t <= w)) return true;                      // только что вышел
   return false;
 }
@@ -1482,7 +1485,17 @@ function updateDragon(dt){
 function updateFireballs(dt){
   const D = CFG.dragon;
   for(const fb of [...fireballs]){
-    if(fb.held) continue;
+    if(fb.held){
+      // пойманный фаербол коснулся земли — бьём им об пол, как схваченным мобом:
+      // взрыв по площади (поджиг + урон мобам в радиусе), фаербол расходуется
+      if(fb.y + fb.r >= GROUND_Y){
+        explodeFireball(fb);
+        fireballs.splice(fireballs.indexOf(fb), 1);
+        heldFireball = null;
+        cv.classList.remove('grabbing');
+      }
+      continue;
+    }
     fb.t += dt;
     fb.x += fb.vx * dt; fb.y += fb.vy * dt;
     // хвост — дым (как от горящих мобов, но крупнее): поднимается вверх и тает
@@ -1686,8 +1699,10 @@ function showVictory(){
     'Западная стена выстояла — Асгард спасён.';
   ovScore.textContent = 'Раздавлено: ' + score;
   ovScore.classList.remove('hidden');
-  ovButtons.classList.add('hidden');         // прячем стандартные кнопки рестарта
-  endlessBtn.classList.remove('hidden');     // обе кнопки победы
+  ovButtons.classList.add('hidden');         // прячем кнопку рестарта
+  endlessBtn.classList.remove('hidden');     // «Бесконечный режим»
+  toMenuBtn.classList.remove('hidden');      // «Выйти в меню»
+  leaveNameBtn.classList.add('hidden');      // «оставить имя» — только на гибели в endless
   ovWinButtons.classList.remove('hidden');
   overlay.classList.remove('hidden');
 }
@@ -1706,24 +1721,15 @@ function toMainScreen(){
   music.menu();
 }
 
-// ВРЕМЕННАЯ дебаг-кнопка: перепрыгнуть сразу к финалу, начиная с диалога ворона
-// (минуя дракона и катарсис-паузу). Потом убрать вместе с кнопкой в index.html.
-function debugStartFinale(){
-  if(!running || finale) return; // только во время партии и не повторно
-  won = true; dragons = [];
-  clearMobsCathartic();
-  fireballs = []; pendingFB = []; heldFireball = null;
-  cv.classList.remove('grabbing');
-  startDialogue('victoryRaven');
-  finale = 'dlgVictory';
-}
-
 // «Бесконечный режим» — игра продолжается: поток мобов идёт без боссов и финала
 function startEndless(){
   overlay.classList.add('hidden');
   ovWinButtons.classList.add('hidden');
   ovButtons.classList.remove('hidden');
   ovScore.classList.add('hidden');
+  // первый заход в бесконечный режим открывает в меню старт «без диалогов и тутора»
+  try { localStorage.setItem('godilla.endlessReached', '1'); } catch(e){}
+  revealEndlessShortcut();
   // РАЗБЛОКИРУЕМ прокачку: в основной игре перков нет, они появляются только здесь.
   // Полный пул из 10 перков, шкала опыта с нуля, полоса навыков становится видимой.
   perksLive = true;
@@ -1796,7 +1802,9 @@ function pickStreamType(){
   }
 
   // 2) обычный поток — только из уже знакомых типов
-  const seen = unlocked.filter(e => seenTypes.has(e.type));
+  // в бесконечном режиме роллер не чаще раза в endless.rollerEvery секунд (иначе их вал)
+  const rollerCool = finale === 'endless' && (gameTime - lastRollerAt) < CFG.endless.rollerEvery;
+  const seen = unlocked.filter(e => seenTypes.has(e.type) && !(rollerCool && e.type === 'roller'));
   const w = [];
   let total = 0;
   // вес типа растёт со временем, но не дольше weightGrowEnd — после этого микс мобов плато.
@@ -2685,18 +2693,16 @@ function loop(ts){
   else shake = 0; // мир на паузе/стопе — всегда гасим тряску камеры (см. CLAUDE.md)
   draw();
   drawDust(); // пылинки стартового экрана — на своём холсте поверх письма
-  // ВРЕМЕННЫЙ дебаг-таймер + кнопка паузы: видны только в бою.
+  // таймер боя + кнопка паузы: видны только в бою.
   // gameTime растёт лишь когда мир не на паузе, поэтому таймер сам замирает на паузе.
   if(running){
     debugTimerEl.classList.remove('hidden');
     pauseBtn.classList.remove('hidden');
-    godGateBtn.classList.remove('hidden');
     const m = Math.floor(gameTime/60), s = Math.floor(gameTime%60);
     debugTimerEl.textContent = m + ':' + String(s).padStart(2, '0');
   } else if(!debugTimerEl.classList.contains('hidden')){
     debugTimerEl.classList.add('hidden');
     pauseBtn.classList.add('hidden');
-    godGateBtn.classList.add('hidden');
   }
   requestAnimationFrame(loop);
 }
@@ -2757,8 +2763,10 @@ function update(dt){
         const type = pickStreamType();
         if(type === 'roller' && lastPickedDebut){
           startRollerDebut();                 // спец-дебют: сперва толпа, потом роллер
+          lastRollerAt = gameTime;
           spawnTimer = CFG.stream.tutorialIntroPause;
         } else if(type){
+          if(type === 'roller') lastRollerAt = gameTime; // отметка для кулдауна в эндлесе
           // туторные мобы (первый в партии и дебюты с подсказкой) выходят сразу на экране,
           // чтобы стрелка/подсветка указывала на видимого моба; прочие — из-за края экрана
           const wasFirst = firstSpawnPending;
@@ -4074,8 +4082,9 @@ const ovButtons = document.getElementById('ov-buttons');
 const ovWinButtons = document.getElementById('ov-win-buttons');
 const leaveNameBtn = document.getElementById('leaveNameBtn');
 const endlessBtn = document.getElementById('endlessBtn');
-// «Оставить имя» — и после победы, и после гибели в бесконечном — ведёт во ввод
-// имени в зал славы. Очки берём из текущего score (число раздавленных мобов).
+const toMenuBtn = document.getElementById('toMenuBtn');
+// «Оставить имя» — на экране гибели в бесконечном — ведёт во ввод имени в зал славы.
+// Очки берём из текущего score (число раздавленных мобов).
 leaveNameBtn.addEventListener('click', () => {
   sfx.tap();
   overlay.classList.add('hidden');
@@ -4083,6 +4092,8 @@ leaveNameBtn.addEventListener('click', () => {
   openLeaderboardEntry(score);
 });
 endlessBtn.addEventListener('click', startEndless);
+// «Выйти в меню» — на экране победы: вернуться на стартовый экран
+toMenuBtn.addEventListener('click', () => { sfx.tap(); toMainScreen(); });
 
 function buildDebugPanel(){
   const wrap = document.getElementById('wrap');
@@ -4230,21 +4241,6 @@ function togglePause(){
   pauseBtn.blur();
 }
 pauseBtn.addEventListener('click', () => { sfx.tap(); togglePause(); });
-// ВРЕМЕННО: дебаг-кнопка «неуязвимый замок» (рядом с паузой). По умолчанию выкл.
-const godGateBtn = document.getElementById('godGateBtn');
-function refreshGodGateBtn(){
-  godGateBtn.textContent = '🛡 Замок: ' + (debugGodGate ? 'неуязвим' : 'уязвим');
-  godGateBtn.classList.toggle('on', debugGodGate);
-}
-godGateBtn.addEventListener('click', () => {
-  sfx.tap();
-  debugGodGate = !debugGodGate;
-  refreshGodGateBtn();
-  godGateBtn.blur();
-});
-refreshGodGateBtn();
-// ВРЕМЕННО: дебаг-кнопка финала (потом убрать вместе с #debugFinaleBtn и debugStartFinale)
-document.getElementById('debugFinaleBtn').addEventListener('click', (e) => { debugStartFinale(); e.currentTarget.blur(); });
 settingsClose.addEventListener('click', () => { sfx.tap(); closeSettings(); });
 masterVolEl.addEventListener('input', () => {
   masterVolume = Math.max(0, Math.min(1, masterVolEl.value / 100));
@@ -4500,6 +4496,8 @@ function gameOver(){
     ovScore.classList.remove('hidden');
     ovButtons.classList.add('hidden');
     endlessBtn.classList.add('hidden');     // только «оставить имя»
+    toMenuBtn.classList.add('hidden');
+    leaveNameBtn.classList.remove('hidden');
     ovWinButtons.classList.remove('hidden');
     overlay.classList.remove('hidden');
     return;
@@ -4575,15 +4573,19 @@ window.addEventListener('keydown', (e) => {
 document.addEventListener('click', (e) => {
   if(e.target.closest('button')) sfx.tap();
 });
-// три кнопки на экране проигрыша: полный рестарт / без тутора / без тутора и диалогов
+// экран проигрыша: единственная кнопка — полный рестарт
 startBtn.addEventListener('click', () => startWithFade({}));
-const startNoTutBtn = document.getElementById('startNoTutBtn');
-startNoTutBtn.addEventListener('click', () => startWithFade({ skipTutorial: true }));
-const startNoNarrativeBtn = document.getElementById('startNoNarrativeBtn');
-startNoNarrativeBtn.addEventListener('click', () => startWithFade({ skipTutorial: true, skipDialogue: true }));
-// кнопки на письме (стартовый экран): «На работу» и отладочная без лора
+// кнопки на письме (стартовый экран): обычный старт и «без диалогов и тутора»
+// (вторая видна только после первого захода в бесконечный режим — см. revealEndlessShortcut)
 document.getElementById('startWallBtn').addEventListener('click', () => startWithFade({}));
 document.getElementById('startWallDebugBtn').addEventListener('click', () => startWithFade({ skipTutorial: true, skipDialogue: true }));
+// старт «без диалогов и тутора» в меню открыт только тем, кто хоть раз дошёл до бесконечного режима
+function revealEndlessShortcut(){
+  let reached = false;
+  try { reached = localStorage.getItem('godilla.endlessReached') === '1'; } catch(e){}
+  document.getElementById('startWallDebugBtn').classList.toggle('hidden', !reached);
+}
+revealEndlessShortcut();
 
 initDust();             // насыпать пылинки до первого кадра
 music.menu();           // в главном меню зациклено и приглушённо играет меню-трек

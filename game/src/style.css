@@ -179,23 +179,20 @@ canvas{
 }
 #ov-buttons button:hover{background:#665443;}
 #ov-buttons button:focus-visible{outline:2px dashed #f1e7d4;outline-offset:2px;}
-/* варианты «без тутора» — мельче и приглушённее основной «Начать заново» */
-#ov-buttons button#startNoTutBtn,
-#ov-buttons button#startNoNarrativeBtn{
-  font-size:9px;padding:9px 12px;background:#33271c;color:#c9bca4;
-}
-#ov-buttons button#startNoTutBtn:hover,
-#ov-buttons button#startNoNarrativeBtn:hover{background:#4a3a29;color:#f1e7d4;}
-/* кнопки экрана победы: «оставить имя» — золотистая (главная), «бесконечный» — приглушённая */
+/* кнопки экрана победы: «Бесконечный режим» и «Оставить имя» — золотистые (главные),
+   «Выйти в меню» — приглушённая вторичная */
 #ov-win-buttons{display:flex;flex-direction:column;align-items:stretch;gap:9px;width:100%;margin-top:4px;}
 #ov-win-buttons button{
   font-family:var(--font-pixel);cursor:pointer;border:none;
+  background:#3f3124;color:#f1e7d4;
   font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:11px 14px;
 }
+#ov-win-buttons button#endlessBtn,
 #ov-win-buttons button#leaveNameBtn{background:#8a6d2f;color:#fff7e0;}
+#ov-win-buttons button#endlessBtn:hover,
 #ov-win-buttons button#leaveNameBtn:hover{background:#a9863c;}
-#ov-win-buttons button#endlessBtn{font-size:9px;padding:9px 12px;background:#33271c;color:#c9bca4;}
-#ov-win-buttons button#endlessBtn:hover{background:#4a3a29;color:#f1e7d4;}
+#ov-win-buttons button#toMenuBtn{font-size:9px;padding:9px 12px;background:#33271c;color:#c9bca4;}
+#ov-win-buttons button#toMenuBtn:hover{background:#4a3a29;color:#f1e7d4;}
 #ov-win-buttons button:focus-visible{outline:2px dashed #f1e7d4;outline-offset:2px;}
 /* шестерёнка настроек — слева снизу */
 /* ВРЕМЕННЫЙ дебаг-таймер боя — справа сверху, под полоской прочности врат */
@@ -272,17 +269,6 @@ canvas{
 /* пауза — справа сверху, под дебаг-таймером */
 /* пауза — справа от таймера, той же высоты (26px), а не 40×40 как кнопка настроек */
 #pauseBtn{top:56px;right:12px;width:26px;height:26px;font-size:13px;}
-/* ВРЕМЕННАЯ дебаг-кнопка: неуязвимость замка вкл/выкл — под кнопкой паузы */
-#godGateBtn{
-  position:absolute;top:138px;right:12px;z-index:5;
-  font-family:var(--font-pixel);font-size:8px;letter-spacing:.5px;line-height:1.4;
-  padding:7px 9px;white-space:nowrap;
-  background:#2e2316;color:#f4ead2;
-  border:2px solid #5a4226;cursor:pointer;
-}
-#godGateBtn:hover{background:#665443;}
-/* включённое состояние — красная «дебажная» подсветка */
-#godGateBtn.on{background:#7a1f1f;color:#ffe0d0;border-color:#1a1626;}
 /* модалка настроек (пауза игры) */
 #settingsPanel{
   position:absolute;inset:0;z-index:40;
@@ -316,23 +302,6 @@ canvas{
 .toggle.off{background:#33271c;color:#c9bca4;text-decoration:line-through;}
 #settingsClose{font-size:11px;padding:11px 18px;}
 #settingsClose:hover{background:#665443;}
-#fsBtn{
-  position:fixed;right:12px;top:12px;z-index:10;
-  font-family:var(--font-body);font-size:20px;line-height:1;
-  width:40px;height:40px;padding:0;
-  background:rgba(255,253,245,.85);color:var(--ink);
-  border:2px solid var(--ink);cursor:none;
-}
-#fsBtn:hover{background:#ffd76a;}
-/* ВРЕМЕННАЯ дебаг-кнопка финала — справа снизу (потом убрать вместе с обработчиком) */
-#debugFinaleBtn{
-  position:fixed;right:12px;bottom:14px;z-index:10;
-  font-family:var(--font-pixel);font-size:9px;letter-spacing:1px;
-  padding:8px 12px;
-  background:#7a1f1f;color:#ffe0d0;
-  border:2px solid #1a1626;cursor:none;
-}
-#debugFinaleBtn:hover{background:#a23030;}
 /* плёночное зерно поверх всего экрана: картинку шума и прозрачность подставляет game.js (блок GRAIN) */
 #grain{
   position:fixed;inset:0;z-index:60;
