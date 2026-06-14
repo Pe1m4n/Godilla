@@ -365,14 +365,14 @@ export const CFG = {
     pool: [
       { type:'small',  from: 0,   weight: 10,  grow: 0    },
       { type:'dog',    from: 6,   weight: 3,   grow: 0.02 },
-      { type:'big',    from: 18,  weight: 3,   grow: 0.03 },
+      { type:'big',    from: 18,  weight: 0.8,   grow: 0.005 },
       { type:'bat',    from: 26,  weight: 2,   grow: 0.02 },
       { type:'bomber', from: 75,  weight: 1.5, grow: 0.02 },
       { type:'caster', from: 100,  weight: 1.2, grow: 0.015 },
       { type:'wisp',   from: 110,  weight: 1.5, grow: 0.02 },
       { type:'huge',   from: 125,  weight: 2,   grow: 0.03 },
-      { type:'mole',   from: 135,  weight: 1.2, grow: 0.015 },
-      { type:'roller', from: 140,  weight: 0.8, grow: 0.01 },
+      { type:'mole',   from: 135,  weight: 3,   grow: 0.015 },
+      { type:'roller', from: 140,  weight: 2.5, grow: 0.01 },
     ],
     cyclopsFirst: 120,   // первый циклоп (сек от начала)
     cyclopsEvery: 50,   // далее пытается выйти каждые ~N секунд (если на экране есть место)

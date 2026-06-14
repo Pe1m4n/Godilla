@@ -488,6 +488,7 @@ const sk = id => player.skills[id] || 0; // уровень скилла игро
 const enemySlow = () => 1 - CFG.skills.molasses.mult * sk('molasses'); // «Трясина»: множитель скорости врагов
 let mouse = {x:0,y:0,px:0,py:0,vx:0,vy:0};
 let shake = 0;
+const SHAKE_MUL = 0.7; // глобальное приглушение тряски камеры (−30% ко всем источникам)
 let skyFlash = 0; // зарево на небо в момент удара молнии (1 → 0)
 
 function rnd(a,b){ return a + Math.random()*(b-a); }
@@ -914,7 +915,7 @@ function hurt(d, dmg, sp){
   // живой, но получил
   sfx.hurt();
   d.flash = 0.25;
-  shake = Math.min(TYPES[d.type].shakeHurt, 3 + sp/200);
+  shake = Math.max(shake, TYPES[d.type].shakeHurt); // фиксированная тряска по типу (без влияния скорости)
   const s = sizeOf(d), px = d.x + s/2, py = d.y + s*0.8;
   const col = bloodCol(d.type);
   for(let i=0;i<5+dmg*3;i++){
@@ -928,7 +929,7 @@ function splat(d, sp){
   stopDemonScream(d);
   stopFuse(d);
   sfx.splat();
-  shake = Math.min(TYPES[d.type].shakeSplat, 6 + sp/120);
+  shake = Math.max(shake, TYPES[d.type].shakeSplat); // фиксированная тряска по типу (без влияния скорости)
   stats.kills[d.type] = (stats.kills[d.type] || 0) + 1; stats.killsTotal++;
   // «Кладка из костей»: каждые every убийств чинят врата
   if(sk('repairKill') > 0 && ++killSinceRepair >= CFG.skills.repairKill.every){
@@ -1199,7 +1200,6 @@ function drawMsgHighlight(){
       cx.fillStyle = g; cx.beginPath(); cx.arc(bz.x, bz.y, R, 0, Math.PI*2); cx.fill();
     }
     cx.restore();
-    drawBrazier(); // ярко перерисовываем сами огоньки поверх тёмной маски
     tutArrowLU(BRAZIERS[1].x, BRAZIERS[1].y); // стрелка — на ПРАВУЮ жаровню
   }
   if(msgHi.swirl){
@@ -3180,7 +3180,8 @@ function draw(){
   cx.save();
   // трясём камеру только во время игры: иначе на экране поражения тряска
   // может «замереть» ненулевой (gameOver зовётся посреди кадра обновления)
-  if(running && shake>0) cx.translate(rnd(-shake,shake), rnd(-shake,shake));
+  // SHAKE_MUL глобально приглушает тряску камеры (−30%) — применяется ко ВСЕМ источникам разом
+  if(running && shake>0){ const s = shake * SHAKE_MUL; cx.translate(rnd(-s,s), rnd(-s,s)); }
 
   // — небо — (overscan ±20px, чтобы тряска камеры не оголяла края)
   if(art.sky){
