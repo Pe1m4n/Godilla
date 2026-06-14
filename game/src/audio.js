@@ -18,6 +18,7 @@ const SFX_CFG = {
   type:  { name: 'finger-tap',              vol: 0.42, pitchJitter: 0.04, rateMin: 0.85, rateMax: 1.5 },
   lightning: { name: 'lightning', vol: 0.85, pitchJitter: 0.07, trim: 1.0 }, // разряд: стартуем с 1-й секунды файла
   tornado:   { name: 'wind',      vol: 1.2375, pitchJitter: 0.05, trim: 1.0, fadeOut: 2.0 }, // ветер: старт с 1с + огибающая
+  dragonRoar:{ name: 'dragon-roar', vol: 0.95, pitchJitter: 0.025 },
   // падение: случайный короткий крик из small/Shreak_*. Для мелких играется как есть,
   // для более тяжёлых юнитов вызывающий опускает playbackRate.
   falling:   { fallback: 'Falling', vol: 0.55, pitchJitter: 0, fadeIn: 0.01, fadeOut: 0.08 },
@@ -394,6 +395,12 @@ export const sfx = {
     }
   },
   wind:  (duration) => sfx.tornado(duration),
+  dragonRoar: () => {
+    const C = SFX_CFG.dragonRoar;
+    if(!playSample(C.name, C.vol, 1, C.pitchJitter)){
+      beep(95, .45, 'sawtooth', .14); beep(62, .65, 'triangle', .1);
+    }
+  },
   falling: (rate = 1, level = 1) => {
     const C = SFX_CFG.falling;
     const name = SMALL_FALLING_NAMES.length

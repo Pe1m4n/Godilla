@@ -435,7 +435,7 @@ let dragon = null;      // 3-й босс, пока null — не вышел
 let braziersLit = false;// разгорелись ли жаровни на крыше (на 2-й минуте, см. CFG.fire.litAt)
 // контроллер появления боссов: каждый выходит один раз в свой момент
 let boss1Spawned = false, boss2Spawned = false, boss2Dead = false;
-let dragonSpawned = false, dragonTimer = 0, won = false;
+let dragonSpawned = false, dragonTimer = 0, dragonRoared = false, won = false;
 // машина финала после смерти дракона. Фазы (см. updateFinale):
 // null → 'pause' → 'dlgVictory' → 'horde' → 'lightningKill' → 'dlgThor' → 'victoryScreen' → 'endless'
 let finale = null, finaleT = 0;
@@ -1304,7 +1304,7 @@ function hitCyclops(c, dmg, fromFire = false){
   shake = Math.max(shake, CFG.cyclops.shakeHit);
   floatText(c.x+CYC_EYE.x, c.y+CYC_EYE.y-16, '-'+dmg+' ХП', '#c0392b', 1);
   if(c.hp <= 0){
-    if(c.boss2){ boss2Dead = true; dragonTimer = CFG.bosses.dragonDelay; } // следом выйдет дракон
+    if(c.boss2){ boss2Dead = true; dragonTimer = CFG.bosses.dragonDelay; dragonRoared = false; } // следом выйдет дракон
     sfx.splat(); shake = CFG.cyclops.shakeDeath;
     stats.kills.cyclops = (stats.kills.cyclops || 0) + 1; stats.killsTotal++;
     addCrushed();
@@ -1335,6 +1335,10 @@ function updateBosses(dt){
   }
   if(boss2Dead && !dragonSpawned){
     dragonTimer -= dt;
+    if(!dragonRoared && dragonTimer <= (CFG.dragon.roarLead ?? 2)){
+      dragonRoared = true;
+      sfx.dragonRoar();
+    }
     if(dragonTimer <= 0){ spawnDragon(); dragonSpawned = true; }
   }
 }
@@ -4349,7 +4353,7 @@ function start({ skipTutorial = false, skipDialogue = false, debug = false } = {
   // боссы, дракон и финал
   fireballs=[]; pendingFB=[]; heldFireball=null; dragon=null; braziersLit=false;
   boss1Spawned=false; boss2Spawned=false; boss2Dead=false;
-  dragonSpawned=false; dragonTimer=0; won=false;
+  dragonSpawned=false; dragonTimer=0; dragonRoared=false; won=false;
   finale=null; finaleT=0; gateInvuln=false;
   ovWinButtons.classList.add('hidden'); ovButtons.classList.remove('hidden');
   swirls=[]; nextSwirl = rnd(CFG.tornado.swirlMin, CFG.tornado.swirlMax);
