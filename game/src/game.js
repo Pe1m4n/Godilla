@@ -5,7 +5,7 @@ import {
   CYC_PAL, CYC_PX, CYC_W, CYC_H, CYC_EYE, DRG_W, DRG_H, SPELL_NAMES,
 } from './config.js';
 import { SPRITES, CYC_SPRITE, DRAGON_SPRITE, SPELL_SPRITES, tint } from './sprites.js';
-import { sfx, setMuted as setSfxMuted, setMasterVolume } from './audio.js';
+import { sfx, setMuted as setSfxMuted, setMasterVolume, setSfxDebugSink } from './audio.js';
 import { music } from './music.js';
 import { art, cursorFrames } from './assets.js';
 import {
@@ -535,7 +535,7 @@ function spawnDemon(type, onScreen = false){
     swingVX: 0, swingVY: 0,  // вектор скорости в момент пика — для броска, если курсор уже притормозил
     walled: false,           // уже упёрся в стену замка (защита от стука каждый кадр)
     roofed: false,           // уже лежит/упёрся в крышу башни
-    scream: null,            // loop-звук падения, пока моб летит после ручного броска
+    scream: null,            // крик падения, пока моб летит после ручного броска
     fuseSnd: null,           // loop-звук фитиля у бомбера (звучит, пока жив)
     burnT: 0, burnTick: 0, burnFx: 0, fireBurstReady: false,
     hasBoulder: type === 'roller', // носильщик идёт с валуном, пока его не отобрали
@@ -556,23 +556,37 @@ function spawnDemon(type, onScreen = false){
 
 function screamBaseRate(d){
   const px = TYPES[d.type].px;
-  const bySize = Math.max(0.42, Math.min(3.1, 12 / Math.pow(px, 1.55)));
-  const typeMul = d.type === 'dog' || d.type === 'wisp' || d.type === 'small' ? 1.18 :
-    d.type === 'huge' ? 0.78 : 1;
-  return bySize * typeMul;
+  if(d.type === 'small') return 1;
+  return Math.max(0.45, Math.min(1, 2.6 / px));
 }
 
 function screamRate(d){
-  const doppler = Math.max(0.72, Math.min(1.28, 1 + (-d.vx / 1300)));
-  return screamBaseRate(d) * doppler;
+  if(d.type === 'small') return 1;
+  const doppler = Math.max(0.8, Math.min(1.12, 1 + (-d.vx / 2500)));
+  return Math.min(1, screamBaseRate(d) * doppler);
 }
 
-const SCREAMS_ENABLED = false; // крики мобов при падении временно отключены
+const SCREAM_LISTENER = {
+  near: 170,
+  far: 780,
+};
+
+function screamVolume(d){
+  const s = sizeOf(d);
+  const cx0 = d.x + s / 2;
+  const cy0 = d.y + s / 2;
+  const groundX = Math.max(0, Math.min(W, cx0));
+  const dist = Math.hypot(cx0 - groundX, cy0 - GROUND_Y);
+  const t = Math.max(0, Math.min(1, (dist - SCREAM_LISTENER.near) / (SCREAM_LISTENER.far - SCREAM_LISTENER.near)));
+  return 1 - t * t * (3 - 2 * t);
+}
+
+const SCREAMS_ENABLED = true;
 
 function startDemonScream(d){
-  if(!SCREAMS_ENABLED) return;   // временно отключено
+  if(!SCREAMS_ENABLED) return;
   if(d.scream || d.type === 'titan') return;
-  d.scream = sfx.falling(screamRate(d));
+  d.scream = sfx.falling(screamRate(d), screamVolume(d));
 }
 
 function stopDemonScream(d){
@@ -598,6 +612,7 @@ function updateDemonScream(d){
     stopDemonScream(d);
   } else {
     d.scream.setRate(screamRate(d));
+    d.scream.setVolume(screamVolume(d));
   }
 }
 
@@ -963,6 +978,11 @@ function splat(d, sp){
   if (held === d) { held = null; cv.classList.remove('grabbing'); }
   demons.splice(demons.indexOf(d),1);
   if (d.type === 'bomber') bomberBoom(px, py); // рвануло — задевает соседей
+}
+
+function playImpactSlapIfNonlethal(d, dmg, strength){
+  if(dmg > 0 && d.hp <= dmg) return;
+  sfx.slap(strength);
 }
 
 // взрыв бомбера: урон по площади всем мобам рядом (возможна цепная реакция)
@@ -2781,8 +2801,8 @@ function update(dt){
         d.y = floor;
         if(!d.grounded){
           d.grounded = true;
-          sfx.slap(d.swing);       // удар мобом о землю — громкость/питч по силе удара
           const dmg = impactDamage(d.swing);
+          playImpactSlapIfNonlethal(d, dmg, d.swing); // летальный удар озвучит только splat/shmiak
           if(dmg > 0){
             slamSmaller(d);        // ударная волна по меньшим (до урона себе — d ещё жив)
             fireBurst(d.x + s/2, GROUND_Y, d);
@@ -2821,8 +2841,8 @@ function update(dt){
         d.x = WALL.x;
         if(!d.walled){
           d.walled = true;
-          sfx.slap(d.swing); // удар мобом о стену замка — по силе удара
           const dmg = impactDamage(d.swing);
+          playImpactSlapIfNonlethal(d, dmg, d.swing); // летальный удар озвучит только splat/shmiak
           if(dmg > 0){ hurt(d, dmg, d.swing); d.swing = 0; }
         }
       } else if(d.x > WALL.x + 12){
@@ -2927,10 +2947,10 @@ function update(dt){
         stopDemonScream(d);
         d.x = WALL.x;
         const sp = Math.hypot(d.vx, d.vy);
-        sfx.slap(sp); // удар мобом о стену замка — по скорости
         const wasArmed = d.armed;
         d.armed = false; d.noEyeDmg = false; // о стену бросок «разряжается», как об пол
         const dmg = wasArmed ? fireImpactDamage(impactDamage(sp), d, wasArmed, sp) : 0;
+        playImpactSlapIfNonlethal(d, dmg, sp); // летальный удар озвучит только splat/shmiak
         if(dmg > 0){
           fireBurst(WALL.x, d.y + s/2, d);
           hurt(d, dmg, sp);
@@ -2946,17 +2966,18 @@ function update(dt){
         // приземлился справа от врат — снова обычный моб (метка подброса ураганом снимается);
         // если упал ЗА врата (слева) — метка остаётся, и врата не получат урон
         if(d.x + s/2 >= MOUNTAIN_X) d.windTossed = false;
-        sfx.slap(Math.hypot(d.vx, d.vy)); // удар мобом о землю — по скорости падения
+        const sp = Math.hypot(d.vx, d.vy);
         if(d.noDmg){
           // вывалился из рук — падение без урона
+          sfx.slap(sp); // удар мобом о землю — по скорости падения
           d.noDmg = false;
           d.state='stun'; d.stun = .5; d.vx=d.vy=0; d.rot = 0;
           continue;
         }
-        const sp = Math.hypot(d.vx, d.vy);
         // урон от пола только при первом касании за бросок; дальше — разряжен
         const wasArmed = d.armed;
         const dmg = wasArmed ? fireImpactDamage(impactDamage(sp), d, wasArmed, sp) : 0;
+        playImpactSlapIfNonlethal(d, dmg, sp); // летальный удар озвучит только splat/shmiak
         d.armed = false; d.noEyeDmg = false;
         d.rotV *= CFG.throwing.spinFloorDamp; // об пол вращение гасится
         if(wasArmed && sk('shockwave') > 0 && sp >= SPD_LIGHT){
@@ -3937,6 +3958,9 @@ const ovScore = document.getElementById('ov-score');
 const startBtn = document.getElementById('startBtn');
 const startScreen = document.getElementById('startScreen'); // письмо от матери — только при первом запуске
 const debugPanel = buildDebugPanel();
+const debugAudioLog = buildDebugAudioLog();
+const debugAudioRows = [];
+setSfxDebugSink(logMobSfx);
 // кнопки финала: стандартный набор рестарта vs набор победы (оставить имя / бесконечный)
 const ovButtons = document.getElementById('ov-buttons');
 const ovWinButtons = document.getElementById('ov-win-buttons');
@@ -4003,8 +4027,43 @@ function buildDebugPanel(){
   return panel;
 }
 
+function buildDebugAudioLog(){
+  const wrap = document.getElementById('wrap');
+  const panel = document.createElement('div');
+  panel.id = 'debugAudioLog';
+  panel.className = 'hidden';
+  const title = document.createElement('div');
+  title.className = 'debug-title';
+  title.textContent = 'MOB SFX';
+  panel.appendChild(title);
+  wrap.appendChild(panel);
+  return panel;
+}
+
+function logMobSfx(ev){
+  if(!debugLocation || !debugAudioLog) return;
+  const row = document.createElement('div');
+  row.className = 'debug-audio-row';
+  row.textContent = ev.kind + ': ' + ev.name + (ev.extra ? ' | ' + ev.extra : '');
+  debugAudioLog.insertBefore(row, debugAudioLog.children[1] || null);
+  debugAudioRows.unshift(row);
+  while(debugAudioRows.length > 10){
+    const old = debugAudioRows.pop();
+    if(old && old.parentNode) old.parentNode.removeChild(old);
+  }
+}
+
+function clearDebugAudioLog(){
+  while(debugAudioRows.length){
+    const row = debugAudioRows.pop();
+    if(row && row.parentNode) row.parentNode.removeChild(row);
+  }
+}
+
 function setDebugPanelVisible(on){
   if(debugPanel) debugPanel.classList.toggle('hidden', !on);
+  if(debugAudioLog) debugAudioLog.classList.toggle('hidden', !on);
+  if(!on) clearDebugAudioLog();
 }
 
 // кнопка звука (слева внизу)

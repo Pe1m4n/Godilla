@@ -16,16 +16,16 @@ const SFX_CFG = {
   tap:   { name: 'finger-tap',              vol: 1.0,  pitchJitter: 0.08 }, // нажатие любой кнопки UI
   lightning: { name: 'lightning', vol: 0.85, pitchJitter: 0.07, trim: 1.0 }, // разряд: стартуем с 1-й секунды файла
   tornado:   { name: 'wind',      vol: 1.2375, pitchJitter: 0.05, trim: 1.0, fadeOut: 2.0 }, // ветер: старт с 1с + огибающая
-  // падение: бесшовная PING-PONG петля по СЕРЕДИНЕ файла (loopFrom..loopTo — доли 0..1).
-  // Сегмент проигрывается вперёд, затем задом наперёд — в точках разворота сэмплы
-  // совпадают, поэтому стыка нет вообще (работает для любого материала, в т.ч. свипов).
-  falling:   { name: 'Falling',   vol: 0.5,  pitchJitter: 0.1, fadeIn: 0.08, fadeOut: 0.12,
-               loopFrom: 0.4, loopTo: 0.62, pingpong: true },
+  // падение: случайный короткий крик из small/Shreak_*. Для мелких играется как есть,
+  // для более тяжёлых юнитов вызывающий опускает playbackRate.
+  falling:   { fallback: 'Falling', vol: 0.55, pitchJitter: 0, fadeIn: 0.01, fadeOut: 0.08 },
   // фитиль бомбера: шипит петлёй, пока моб жив (ping-pong средней части — без стыка)
   fuse:    { name: 'fuse',      vol: 0.4,  pitchJitter: 0.05, fadeIn: 0.05, fadeOut: 0.1,
              loopFrom: 0.12, loopTo: 0.88, pingpong: true },
   // взрыв бомбера при гибели (одиночный)
   explode: { name: 'explosion', vol: 0.7,  pitchJitter: 0.08 },
+  // кровавый шмяк при гибели моба: случайный вариант из assets/sounds/Shmiak
+  splat: { vol: 0.75, pitchJitter: 0 },
   // удар: несколько вариаций сэмпла (разный питч/тембр) — берём случайную, плюс
   // питч ещё подкручивается силой удара. Файлы уже обрезаны от тишины в начале.
   slap:  { names: ['slap_1', 'slap_2', 'slap_3', 'slap_4'],
@@ -38,14 +38,22 @@ const SFX_CFG = {
 
 // карта «имя файла без расширения» → адрес (Vite). Имя 478284__..._finger-tap-2_2
 // длинное — даём ему короткий псевдоним 'finger-tap' для удобства в SFX_CFG.
-const sndUrls = import.meta.glob('../assets/sounds/*.{wav,mp3,ogg}',
+const sndUrls = import.meta.glob('../assets/sounds/**/*.{wav,mp3,ogg}',
   { eager: true, query: '?url', import: 'default' });
 const SND = {};
 for (const [path, url] of Object.entries(sndUrls)) {
   const name = path.split('/').pop().replace(/\.[^.]+$/, '');
   SND[name] = url;
+  const shmiakFile = path.match(/\/Shmiak\/(shmiak\d+\.wav)$/i)?.[1];
+  if(shmiakFile) SND['Shmiak/' + shmiakFile] = url;
 }
 if (SND['478284__joao_janz__finger-tap-2_2']) SND['finger-tap'] = SND['478284__joao_janz__finger-tap-2_2'];
+const SMALL_FALLING_NAMES = Object.keys(SND)
+  .filter(name => /^Shreak_\d+$/i.test(name))
+  .sort((a, b) => parseInt(a.replace(/\D+/g, ''), 10) - parseInt(b.replace(/\D+/g, ''), 10));
+const SHMIAK_NAMES = Object.keys(SND)
+  .filter(name => /^Shmiak\/shmiak\d+\.wav$/i.test(name))
+  .sort((a, b) => parseInt(a.replace(/\D+/g, ''), 10) - parseInt(b.replace(/\D+/g, ''), 10));
 
 let AC = null;
 let muted = false;
@@ -54,14 +62,21 @@ try { const s = localStorage.getItem('godilla.masterVol'); if(s !== null) master
 try { muted = localStorage.getItem('godilla.sfxMuted') === '1'; } catch(e){}
 const buffers = {};   // имя → декодированный AudioBuffer (заполняется асинхронно)
 const loopBuffers = {}; // имя → предсобранный бесшовный буфер для петли (кэш)
+let debugSink = null;
 
 export function toggleMute(){ muted = !muted; return muted; }
 export function setMuted(b){ muted = b; }           // мут звуков (отдельно от музыки)
 export function isMuted(){ return muted; }
 export function setMasterVolume(v){ masterVol = Math.max(0, Math.min(1, v)); } // мастер-громкость звуков
+export function setSfxDebugSink(fn){ debugSink = typeof fn === 'function' ? fn : null; }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
+
+function debugSfx(kind, name, extra = ''){
+  if(!debugSink) return;
+  try{ debugSink({ kind, name, extra }); }catch(e){}
+}
 
 // общий аудио-контекст; создаётся лениво и сразу начинает грузить сэмплы.
 // Резюмируем при каждом обращении — браузер держит контекст «спящим» до жеста.
@@ -228,6 +243,56 @@ function playLoopHandle(name, {
   };
 }
 
+function playOneShotHandle(name, {
+  vol = 0.6,
+  level = 1,
+  rate = 1,
+  jitter = 0,
+  fadeIn = 0.01,
+  fadeOut = 0.08,
+  trim = 0,
+} = {}){
+  if(muted) return null;
+  const ac = ctx();
+  if(!ac) return null;
+  const buf = buffers[name];
+  if(!buf) return null;
+  const src = ac.createBufferSource();
+  const g = ac.createGain();
+  let stopped = false;
+  src.buffer = buf;
+  src.playbackRate.value = Math.max(0.05, rate * (1 + (jitter ? rnd(-jitter, jitter) : 0)));
+  const now = ac.currentTime;
+  const peak = vol * masterVol * clamp(level, 0, 1);
+  g.gain.setValueAtTime(0.001, now);
+  g.gain.linearRampToValueAtTime(Math.max(0.001, peak), now + Math.max(0.005, fadeIn));
+  src.connect(g).connect(ac.destination);
+  const off = clamp(trim, 0, Math.max(0, buf.duration - 0.02));
+  src.start(now, off);
+  src.onended = () => { stopped = true; };
+  return {
+    setRate(nextRate){
+      if(stopped) return;
+      const t = ac.currentTime;
+      src.playbackRate.setTargetAtTime(Math.max(0.05, nextRate), t, 0.05);
+    },
+    setVolume(nextLevel){
+      if(stopped) return;
+      const t = ac.currentTime;
+      g.gain.setTargetAtTime(Math.max(0.001, vol * masterVol * clamp(nextLevel, 0, 1)), t, 0.06);
+    },
+    stop(){
+      if(stopped) return;
+      stopped = true;
+      const t = ac.currentTime;
+      g.gain.cancelScheduledValues(t);
+      g.gain.setValueAtTime(Math.max(0.001, g.gain.value), t);
+      g.gain.linearRampToValueAtTime(0.001, t + Math.max(0.02, fadeOut));
+      try{ src.stop(t + Math.max(0.02, fadeOut) + 0.03); }catch(e){}
+    },
+  };
+}
+
 function beep(freq, dur, type = 'square', vol = 0.08){
   if(muted) return;
   const ac = ctx();
@@ -257,17 +322,31 @@ export const sfx = {
     const vol  = C.volMin + (C.volMax - C.volMin) * k;
     const rate = C.rateMax + (C.rateMin - C.rateMax) * k; // чем сильнее, тем ниже
     const name = C.names[(Math.random() * C.names.length) | 0]; // случайная вариация
-    if(!playSample(name, vol, rate, C.pitchJitter)){ beep(140, .12, 'sawtooth', .12); }
+    if(playSample(name, vol, rate, C.pitchJitter)){
+      debugSfx('mob slap', name, 'rate ' + rate.toFixed(2));
+    } else {
+      debugSfx('mob slap', 'fallback beep');
+      beep(140, .12, 'sawtooth', .12);
+    }
   },
   // нажатие кнопки в меню / в конце игры
   tap: () => {
     const C = SFX_CFG.tap;
     if(!playSample(C.name, C.vol, 1, C.pitchJitter)) beep(700, .05, 'square', .08);
   },
-  splat: () => { beep(140, .18, 'sawtooth', .12); beep(90, .25, 'triangle', .1); },
-  hurt:  () => { beep(220, .1, 'sawtooth', .1); },
+  splat: () => {
+    const C = SFX_CFG.splat;
+    const name = SHMIAK_NAMES[(Math.random() * SHMIAK_NAMES.length) | 0];
+    if(name && playSample(name, C.vol, 1, C.pitchJitter)){
+      debugSfx('mob splat', name);
+    } else {
+      debugSfx('mob splat', 'fallback beep');
+      beep(140, .18, 'sawtooth', .12); beep(90, .25, 'triangle', .1);
+    }
+  },
+  hurt:  () => { debugSfx('mob hurt', 'fallback beep'); beep(220, .1, 'sawtooth', .1); },
   reach: () => beep(110, .3, 'square', .1),
-  thud:  () => beep(200, .06, 'triangle', .06),
+  thud:  () => { debugSfx('mob thud', 'fallback beep'); beep(200, .06, 'triangle', .06); },
   zap:   () => {
     const C = SFX_CFG.lightning;
     if(!playSample(C.name, C.vol, 1, C.pitchJitter, C.trim)){
@@ -290,31 +369,41 @@ export const sfx = {
     }
   },
   wind:  (duration) => sfx.tornado(duration),
-  falling: (rate = 1) => {
+  falling: (rate = 1, level = 1) => {
     const C = SFX_CFG.falling;
-    return playLoopHandle(C.name, {
+    const name = SMALL_FALLING_NAMES.length
+      ? SMALL_FALLING_NAMES[(Math.random() * SMALL_FALLING_NAMES.length) | 0]
+      : C.fallback;
+    const handle = playOneShotHandle(name, {
       vol: C.vol,
+      level,
       rate,
       jitter: C.pitchJitter,
       fadeIn: C.fadeIn,
       fadeOut: C.fadeOut,
-      loopFrom: C.loopFrom,
-      loopTo: C.loopTo,
-      pingpong: C.pingpong,
     });
+    if(handle) debugSfx('mob falling', name, 'rate ' + rate.toFixed(2));
+    return handle;
   },
   // фитиль бомбера: возвращает хэндл петли ({setRate, stop}) — звучит, пока моб жив
   fuse: () => {
     const C = SFX_CFG.fuse;
-    return playLoopHandle(C.name, {
+    const handle = playLoopHandle(C.name, {
       vol: C.vol, rate: 1, jitter: C.pitchJitter,
       fadeIn: C.fadeIn, fadeOut: C.fadeOut,
       loopFrom: C.loopFrom, loopTo: C.loopTo, pingpong: C.pingpong,
     });
+    if(handle) debugSfx('mob fuse', C.name);
+    return handle;
   },
   // взрыв бомбера (одиночный сэмпл; если не догрузился — запасные beep как у boom)
   explode: () => {
     const C = SFX_CFG.explode;
-    if(!playSample(C.name, C.vol, 1, C.pitchJitter)){ beep(120, .25, 'sawtooth', .12); beep(60, .35, 'triangle', .1); }
+    if(playSample(C.name, C.vol, 1, C.pitchJitter)){
+      debugSfx('mob explode', C.name);
+    } else {
+      debugSfx('mob explode', 'fallback beep');
+      beep(120, .25, 'sawtooth', .12); beep(60, .35, 'triangle', .1);
+    }
   },
 };

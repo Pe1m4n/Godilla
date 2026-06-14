@@ -79,6 +79,21 @@ canvas{
   border:2px solid var(--ink);
 }
 #debugSpawnPanel button:hover{background:#ffd76a;}
+#debugAudioLog{
+  position:absolute;left:334px;top:92px;z-index:12;
+  width:244px;min-height:28px;max-height:192px;overflow:hidden;
+  pointer-events:none;
+  font-family:var(--font-pixel);font-size:7px;line-height:1.45;
+  color:#f4ead2;background:rgba(26,22,38,.78);border:2px solid var(--ink);
+}
+#debugAudioLog .debug-title{
+  color:#1a1626;text-align:center;
+  background:rgba(255,253,245,.86);border-bottom:2px solid var(--ink);padding:5px 4px;
+}
+#debugAudioLog .debug-audio-row{
+  padding:4px 5px;border-top:1px solid rgba(255,253,245,.18);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
 /* ── стартовый экран: фон-комната + письмо на весь нижний край ── */
 #startScreen{
   position:absolute;inset:0;
