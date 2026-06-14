@@ -2629,6 +2629,17 @@ cv.addEventListener('touchstart', onDown, {passive:false});
 window.addEventListener('touchmove', onMove, {passive:false});
 window.addEventListener('touchend', onUp);
 
+// Страж от планшетного предупреждения «вы вводите текст в полноэкранном режиме»:
+// если текстовое поле получило фокус, пока экран в фуллскрине, мгновенно снимаем фокус —
+// предупреждение не успевает всплыть. Ввод имени (зал славы) сам выходит из фуллскрина.
+document.addEventListener('focusin', e => {
+  const t = e.target;
+  if(!(document.fullscreenElement || document.webkitFullscreenElement)) return;
+  if(t && t.tagName === 'INPUT' && (t.type === 'text' || t.type === 'search' || t.type === 'email' || t.type === 'number')){
+    t.blur();
+  }
+});
+
 // ── цикл ───────────────────────────────────────────────────────────
 let last = 0;
 // ── пылинки в воздухе ──────────────────────────────────────────────
@@ -4422,13 +4433,16 @@ async function openLeaderboardView(){
 // иначе на планшете браузер показывает «вы вводите текст в полноэкранном режиме»)
 function exitFullscreenIfAny(){
   try {
-    if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
-    else if(document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
+    if(document.fullscreenElement && document.exitFullscreen) return document.exitFullscreen();
+    if(document.webkitFullscreenElement && document.webkitExitFullscreen){ document.webkitExitFullscreen(); }
   } catch(e){}
+  return Promise.resolve();
 }
 // открыть зал с вводом имени (после победы / гибели в бесконечном режиме)
 async function openLeaderboardEntry(kills){
-  exitFullscreenIfAny(); // ввод имени — текстовое поле; в фуллскрине планшет ругается
+  // ВАЖНО: ждём ПОЛНОГО выхода из фуллскрина перед фокусом текстового поля —
+  // иначе планшет показывает «вы вводите текст в полноэкранном режиме»
+  try { await exitFullscreenIfAny(); } catch(e){}
   lbPendingKills = kills;
   lbReturnToMenu = true;
   lbEntry.classList.remove('hidden');
@@ -4436,7 +4450,7 @@ async function openLeaderboardEntry(kills){
   lbName.value = '';
   lbShowLoading();
   leaderboardPanel.classList.remove('hidden');
-  setTimeout(() => { try { lbName.focus(); } catch(e){} }, 60);
+  setTimeout(() => { try { lbName.focus(); } catch(e){} }, 80);
   lbRenderList(await lbFetchTop()); // показать текущий топ под полем ввода
 }
 async function submitLeaderboardName(){
