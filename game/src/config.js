@@ -331,26 +331,27 @@ export const CFG = {
     minEvery: 0.4,      // предел: чаще не спавнит (пик напора)
     rampTime: 130,      // за сколько секунд интервал падает от startEvery до minEvery
     speedPerSec: 0.2,   // прибавка к скорости моба за каждую секунду игры
+    preCyclopsSpawnMul: 0.77, // до первого циклопа поток примерно на 30% плотнее
     postVisorSpawnMul: 1.176, // после выхода циклопа с забралом поток чуть реже
     threatEvery: 20,    // каждые N секунд растёт внутренний уровень угрозы для лога/баланса
     // знакомство с новым типом: впервые он выходит ПРИНУДИТЕЛЬНО и в одиночку
     // (рядом не спавнятся другие незнакомые типы), а между двумя такими премьерами
     // держим паузу introGap секунд — всё это время идут только уже виденные типы.
-    introGap: 8,
-    tutorialIntroPause: 4, // после туториального дебюта даём игроку несколько секунд без нового спавна
+    introGap: 6,
+    tutorialIntroPause: 3, // после туториального дебюта даём игроку несколько секунд без нового спавна
     // пул типов: from — со скольки секунд тип начинает появляться;
     // weight — базовый вес в случайном выборе; grow — прибавка веса за секунду после разблокировки
     pool: [
       { type:'small',  from: 0,   weight: 10,  grow: 0    },
-      { type:'dog',    from: 8,   weight: 3,   grow: 0.02 },
-      { type:'big',    from: 26,  weight: 3,   grow: 0.03 },
-      { type:'bat',    from: 36,  weight: 2,   grow: 0.02 },
-      { type:'bomber', from: 48,  weight: 1.5, grow: 0.02 },
-      { type:'caster', from: 58,  weight: 1.2, grow: 0.015 },
-      { type:'wisp',   from: 66,  weight: 1.5, grow: 0.02 },
-      { type:'huge',   from: 76,  weight: 2,   grow: 0.03 },
-      { type:'mole',   from: 104, weight: 1.2, grow: 0.015 },
-      { type:'roller', from: 122, weight: 0.8, grow: 0.01 },
+      { type:'dog',    from: 6,   weight: 3,   grow: 0.02 },
+      { type:'big',    from: 18,  weight: 3,   grow: 0.03 },
+      { type:'bat',    from: 26,  weight: 2,   grow: 0.02 },
+      { type:'bomber', from: 34,  weight: 1.5, grow: 0.02 },
+      { type:'caster', from: 42,  weight: 1.2, grow: 0.015 },
+      { type:'wisp',   from: 50,  weight: 1.5, grow: 0.02 },
+      { type:'huge',   from: 58,  weight: 2,   grow: 0.03 },
+      { type:'mole',   from: 66,  weight: 1.2, grow: 0.015 },
+      { type:'roller', from: 74,  weight: 0.8, grow: 0.01 },
     ],
     cyclopsFirst: 92,   // первый циклоп (сек от начала)
     cyclopsEvery: 50,   // далее пытается выйти каждые ~N секунд (если на экране есть место)

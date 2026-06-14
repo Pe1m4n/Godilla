@@ -1339,6 +1339,7 @@ function curSpawnEvery(){
   const S = CFG.stream;
   const k = Math.min(1, gameTime / S.rampTime);
   const base = S.startEvery + (S.minEvery - S.startEvery) * k;
+  if(!boss1Spawned) return base * S.preCyclopsSpawnMul;
   return boss2Spawned ? base * S.postVisorSpawnMul : base;
 }
 
