@@ -8,7 +8,7 @@
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{height:100%;overflow:hidden;background:#14121c;}
 body{display:flex;align-items:center;justify-content:center;font-family:var(--font-body);}
-#wrap{position:relative;transform-origin:center center;}
+#wrap{position:relative;transform-origin:center center;cursor:none;}
 canvas{
   display:block;
   image-rendering:pixelated;
