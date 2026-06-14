@@ -1221,7 +1221,7 @@ function drawMsgHighlight(){
     const c = msgHi.cloud;
     tutGlow(c.x + cloudW(c)/2, c.y + cloudH(c)/2, cloudW(c)*0.75);
     if(c.charge) drawChargedCloud(c);                       // ярко перерисовываем тучу поверх маски
-    tutArrowDown(c.x + cloudW(c)/2, c.y - 4);               // стрелка сверху вниз, остриём в тучу
+    tutArrowUp(c.x + cloudW(c)/2, c.y + cloudH(c) + 6);     // стрелка снизу вверх, остриём в тучу
   }
   if(msgHi.braziers){
     // яркая аддитивная подсветка обеих жаровень + перерисовка самих огоньков поверх маски
@@ -1276,6 +1276,24 @@ function tutArrowDown(tx, ty){
   cx.strokeStyle = '#fff'; cx.fillStyle = '#fff'; cx.lineWidth = 5; cx.lineCap = 'round';
   cx.beginPath(); cx.moveTo(tx, yTip - len); cx.lineTo(tx, yTip - 7); cx.stroke();
   cx.beginPath(); cx.moveTo(tx, yTip); cx.lineTo(tx - 9, yTip - 13); cx.lineTo(tx + 9, yTip - 13); cx.closePath(); cx.fill();
+  cx.restore();
+}
+
+// стрелка снизу вверх (↑): остриё сверху в (tx,ty), тело ниже; качается снизу к цели.
+// Когда будет готов спрайт — положи его в assets как art.arrowUp, и он подхватится.
+function tutArrowUp(tx, ty){
+  const bob = (Math.sin(last*0.006)+1) * 6;
+  const img = art.arrowUp;
+  if(img){
+    cx.drawImage(img, Math.round(tx - ARROW_PX/2), Math.round(ty + bob), ARROW_PX, ARROW_PX);
+    return;
+  }
+  // запасной вариант, пока спрайта нет: простая белая стрелка вверх
+  const yTip = ty + bob, len = 30;
+  cx.save();
+  cx.strokeStyle = '#fff'; cx.fillStyle = '#fff'; cx.lineWidth = 5; cx.lineCap = 'round';
+  cx.beginPath(); cx.moveTo(tx, yTip + len); cx.lineTo(tx, yTip + 7); cx.stroke();
+  cx.beginPath(); cx.moveTo(tx, yTip); cx.lineTo(tx - 9, yTip + 13); cx.lineTo(tx + 9, yTip + 13); cx.closePath(); cx.fill();
   cx.restore();
 }
 
@@ -1353,19 +1371,14 @@ function updateBosses(dt){
   } else if(boss1Spawned && !boss2Spawned && gameTime >= CFG.bosses.visorAt && cyclopes.length === 0){
     spawnCyclops({ visor: true }); boss2Spawned = true;
   }
-  // дракон выходит ЖЁСТКО в CFG.bosses.dragonAt (4:30), независимо от 2-го босса
-  if(!dragonSpawned){
-    const left = CFG.bosses.dragonAt - gameTime;
-    if(!dragonRoared && left <= (CFG.dragon.roarLead ?? 2)){
+  // дракон выходит через dragonDelay секунд ПОСЛЕ гибели 2-го босса (таймер ставит hitCyclops)
+  if(boss2Dead && !dragonSpawned){
+    if(!dragonRoared && dragonTimer <= (CFG.dragon.roarLead ?? 2)){
       dragonRoared = true;
       sfx.dragonRoar();
     }
-    if(left <= 0){
-      // если 2-й босс ещё на сцене — убираем недобитого, чтобы не было двух боссов разом
-      if(cyclopes.length) cyclopes.length = 0;
-      boss2Dead = true;              // для согласованности финала/пауз волн
-      spawnDragon(); dragonSpawned = true;
-    }
+    dragonTimer -= dt;
+    if(dragonTimer <= 0){ spawnDragon(); dragonSpawned = true; }
   }
 }
 
@@ -1374,7 +1387,7 @@ function updateBosses(dt){
 function dragonWavePause(){
   if(finale === 'endless') return false;
   const w = CFG.dragon.wavePause ?? 5;
-  if(!dragonSpawned && (CFG.bosses.dragonAt - gameTime) <= w) return true; // вот-вот выйдет
+  if(boss2Dead && !dragonSpawned && dragonTimer <= w) return true; // вот-вот выйдет
   if(dragons.some(d => d.t <= w)) return true;                      // только что вышел
   return false;
 }
@@ -1830,8 +1843,11 @@ function pickStreamType(){
   const tw = finale === 'endless'
     ? CFG.stream.weightGrowEnd + endlessT
     : Math.min(gameTime, CFG.stream.weightGrowEnd);
+  // пока на сцене циклоп с деревянным забралом — режем вертлявых синих (wisp): момент и так тяжёлый
+  const visorFight = cyclopes.some(c => c.visor > 0);
   for(const e of seen){
-    const ww = e.weight + e.grow * Math.max(0, tw - e.from);
+    let ww = e.weight + e.grow * Math.max(0, tw - e.from);
+    if(e.type === 'wisp' && visorFight) ww *= 0.25;
     w.push(ww); total += ww;
   }
   let r = Math.random() * total;
@@ -1948,7 +1964,8 @@ function updateIntroScript(){
 // ── прокачка ───────────────────────────────────────────────────────
 // урон по вратам с учётом скилла «Каменная кладка»
 function mountainDmg(base){
-  return Math.round(base * (1 - CFG.skills.armor.mult * sk('armor')));
+  // /1.3 — врата на 30% прочнее (урон по ним снижен; полоска по-прежнему 0..100)
+  return Math.round(base * (1 - CFG.skills.armor.mult * sk('armor')) / 1.3);
 }
 
 // взрывная волна от падения брошенного демона (скилл shockwave)
