@@ -54,6 +54,24 @@ canvas{
 }
 .skill-card b{display:block;font-family:var(--font-pixel);font-size:10px;line-height:1.5;margin-bottom:8px;text-transform:uppercase;}
 .skill-card .lvl-tag{margin-top:8px;color:#7a4a32;font-size:12px;}
+#debugSpawnPanel{
+  position:absolute;left:204px;top:92px;z-index:12;
+  display:grid;grid-template-columns:repeat(2, 58px);gap:4px;
+  pointer-events:auto;
+}
+#debugSpawnPanel .debug-title{
+  grid-column:1 / -1;
+  font-family:var(--font-pixel);font-size:8px;line-height:1;
+  color:#1a1626;text-align:center;
+  background:rgba(255,253,245,.86);border:2px solid var(--ink);padding:5px 4px;
+}
+#debugSpawnPanel button{
+  min-height:22px;padding:3px 4px;
+  font-family:var(--font-pixel);font-size:7px;line-height:1.2;text-transform:uppercase;
+  background:rgba(255,253,245,.9);color:var(--ink);
+  border:2px solid var(--ink);
+}
+#debugSpawnPanel button:hover{background:#ffd76a;}
 /* ── стартовый экран: фон-комната + письмо на весь нижний край ── */
 #startScreen{
   position:absolute;inset:0;
