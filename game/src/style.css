@@ -19,6 +19,9 @@ canvas{
   image-rendering:pixelated;
   image-rendering:crisp-edges;
   cursor:none; /* системный курсор скрыт — рисуем свою руку спрайтом в game.js */
+  /* touch-action:none — на мобилке убирает задержку отклика, зум двойным тапом и
+     прокрутку/«pull-to-refresh» при перетаскивании по холсту: тач идёт сразу в игру */
+  touch-action:none;
   box-shadow:0 0 0 4px var(--ink), 0 18px 50px rgba(0,0,0,.45);
 }
 #hud{

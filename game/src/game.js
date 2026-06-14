@@ -2387,6 +2387,8 @@ function ptr(e){
 }
 function onDown(e){
   if(!running || choosing || settingsOpen) return;
+  // тач: гасим браузерные жесты и синтетические mouse-события (иначе тап сработал бы дважды)
+  if(e.touches) e.preventDefault();
   // идёт диалог: клик допечатывает реплику / листает дальше, в игру не проходит
   if(dialogueActive()){
     dialogueClick();
@@ -3666,6 +3668,13 @@ const CURSOR_HELD = 12;           // кадр удержания
 const CURSOR_POINTER = 5;         // кадр-указатель над интерактивом
 let cursorState = { phase: 'idle', i: 0, t: 0 };
 let cursorEl = null;
+let usingTouch = false; // тач-устройство: рисованную «руку» не показываем (палец сам и есть курсор)
+// как только был любой тач — переходим в тач-режим (ловим и нажатие по кнопкам меню)
+window.addEventListener('touchstart', () => {
+  if(usingTouch) return;
+  usingTouch = true;
+  if(cursorEl) cursorEl.style.display = 'none';
+}, { passive: true });
 let perkHover = false; // курсор над карточкой перка → показываем кадр-«указатель»
 let btnHover = false;  // курсор над любой HTML-кнопкой → тоже кадр-«указатель»
 // делегирование: при наведении на кнопку (в меню, оверлеях, HUD) включаем «указатель»
@@ -3749,6 +3758,7 @@ function drawCursor(){
   updateCursorElement();
 }
 function updateCursorElement(){
+  if(usingTouch){ if(cursorEl) cursorEl.style.display = 'none'; return; } // на тач-устройстве руку не рисуем
   const el = ensureCursorEl();
   if(!el) return;
   const img = cursorFrames[cursorFrameNum()];
