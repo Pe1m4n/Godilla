@@ -4418,8 +4418,17 @@ async function openLeaderboardView(){
   leaderboardPanel.classList.remove('hidden');
   lbRenderList(await lbFetchTop());
 }
+// выйти из полноэкранного режима, если он включён (перед фокусом текстового поля:
+// иначе на планшете браузер показывает «вы вводите текст в полноэкранном режиме»)
+function exitFullscreenIfAny(){
+  try {
+    if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
+    else if(document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
+  } catch(e){}
+}
 // открыть зал с вводом имени (после победы / гибели в бесконечном режиме)
 async function openLeaderboardEntry(kills){
+  exitFullscreenIfAny(); // ввод имени — текстовое поле; в фуллскрине планшет ругается
   lbPendingKills = kills;
   lbReturnToMenu = true;
   lbEntry.classList.remove('hidden');
