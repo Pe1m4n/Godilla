@@ -1,6 +1,7 @@
 import {
   DEMON_MAP, PALS_SMALL, PALS_BIG, PALS_HUGE,
-  DOG_MAP, PALS_DOG, PALS_ROLLER, PALS_BOMBER,
+  DOG_MAP, PALS_DOG, PALS_ROLLER,
+  BOMB_MAP, BOMB_PAL,
   BAT_MAP, PALS_BAT, PALS_WISP, PALS_CASTER, PALS_MOLE, PALS_TITAN,
   CYC_MAP, CYC_PAL, SPELL_MAPS, SPELL_PALS,
   HORN_MAP, HORN_PAL,
@@ -62,7 +63,7 @@ export const SPRITES = {
   huge:   PALS_HUGE.map(p => bake(DEMON_MAP, p)),
   dog:    PALS_DOG.map(p => bake(DOG_MAP, p)),
   roller: PALS_ROLLER.map(p => bake(DEMON_MAP, p)),
-  bomber: PALS_BOMBER.map(p => bake(DEMON_MAP, p)),
+  bomber: [bake(BOMB_MAP, BOMB_PAL)], // собственный пиксельный спрайт-бомба
   bat:    PALS_BAT.map(p => bake(BAT_MAP, p)),
   wisp:   PALS_WISP.map(p => bake(BAT_MAP, p)),
   caster: PALS_CASTER.map(p => bake(DEMON_MAP, p)),

@@ -1,5 +1,6 @@
 import { CFG } from './config.js';
 import { SPRITES } from './sprites.js';
+import { art } from './assets.js';
 
 // ────────────────────────────────────────────────────────────────────
 // Обучающая сцена — отключаемый модуль (см. CFG.tutorial).
@@ -60,12 +61,12 @@ function buildTextEl(){
     'font-family:'+FONT+'; color:#fff7d2; line-height:1.6;'+
     'text-shadow:2px 2px 0 #0a0812;';
   const main = document.createElement('div');
-  main.style.fontSize = '16px';
+  main.style.cssText = 'font-size:16px; max-width:760px; margin:0 auto; text-wrap:balance;';
   main.textContent = CFG.tutorial.text;
   textEl.appendChild(main);
   if(CFG.tutorial.text2){
     const sub = document.createElement('div');
-    sub.style.cssText = 'font-size:10px; color:#cfd2e6; margin-top:10px;';
+    sub.style.cssText = 'font-size:10px; color:#cfd2e6; margin:10px auto 0; max-width:680px; text-wrap:balance;';
     sub.textContent = CFG.tutorial.text2;
     textEl.appendChild(sub);
   }
@@ -83,13 +84,15 @@ function buildMsgEl(){
   msgEl = document.createElement('div');
   msgEl.style.cssText =
     'position:absolute; left:50%; top:40%; transform:translate(-50%,-50%);'+
-    'width:680px; max-width:90%; text-align:center; pointer-events:none; z-index:5; display:none;'+
+    'width:600px; max-width:88%; text-align:center; pointer-events:none; z-index:5; display:none;'+
     'font-family:'+FONT+'; line-height:1.7; text-shadow:2px 2px 0 #0a0812;';
   msgTitleEl = document.createElement('div');
-  msgTitleEl.style.cssText = 'font-size:13px; color:#ffe14d;';
+  // text-wrap:balance — браузер сам делит на ровные строки по реальной ширине шрифта,
+  // без «слов-сирот» на отдельной строке (раньше жёсткий \n из splitTwoLines их плодил)
+  msgTitleEl.style.cssText = 'font-size:13px; color:#ffe14d; text-wrap:balance;';
   msgEl.appendChild(msgTitleEl);
   msgSubEl = document.createElement('div');
-  msgSubEl.style.cssText = 'font-size:9px; color:#cfd2e6; line-height:1.9; margin-top:18px;';
+  msgSubEl.style.cssText = 'font-size:9px; color:#cfd2e6; line-height:1.9; margin-top:18px; text-wrap:balance;';
   msgEl.appendChild(msgSubEl);
   wrap.appendChild(msgEl);
 }
@@ -114,6 +117,7 @@ export const tutorialMsgDismiss = () => msgDismiss; // 'click' | 'grab'
 export const tutorialDemon      = () => demon;
 // первые skipLock секунд по объекту нельзя кликнуть — защита от случайного нажатия
 export const tutorialMsgLocked    = () => msgActive && msgT < (CFG.tutorial.skipLock ?? 0);
+export const tutorialMsgTime      = () => msgT; // сколько секунд сообщение на экране
 export const tutorialActiveLocked = () => active   && actT < (CFG.tutorial.skipLock ?? 0);
 
 // тикает каждый кадр (даже на паузе) — копит время показа тутора/сообщения
@@ -129,7 +133,7 @@ export function tutorialTryMessage(key, title, sub, dismiss = 'click'){
   if(!enabledThisRun || active || msgActive || shownOnce.has(key)) return false;
   shownOnce.add(key);
   msgKey = key; msgDismiss = dismiss; msgT = 0;
-  if(msgTitleEl) msgTitleEl.textContent = title || '';
+  if(msgTitleEl) msgTitleEl.textContent = title || ''; // перенос — CSS text-wrap:balance
   if(msgSubEl){ msgSubEl.textContent = sub || ''; msgSubEl.style.display = sub ? 'block' : 'none'; }
   msgActive = true; showMsg(true);
   return true;
@@ -182,28 +186,15 @@ export function drawTutorial(demons, last){
 
   const d = demon;
   if(!d || !demons.includes(d)) return;
-  const { mx, my, s } = highlightDemon(d);
+  highlightDemon(d);
 
-  // белая стрелка из верхне-левого угла к мобу (диагональ 45° вниз-вправо),
-  // покачивается по своей оси — «тычет» в моба
-  const ang = Math.PI/4;
-  const bob = (Math.sin(last*0.006)+1) * 7;             // 0..14 вдоль оси стрелки
-  const gap = s*0.75 + 14 + bob;                        // остриё не доходит до моба
-  const tipX = mx - Math.cos(ang)*gap,  tipY = my - Math.sin(ang)*gap;
-  const tailX = mx - Math.cos(ang)*(gap+72), tailY = my - Math.sin(ang)*(gap+72);
-  strokeArrow(tailX, tailY, tipX, tipY, 5);
+  // стрелка-спрайт arrow-right-down (↘): остриё (правый-нижний угол) у верх-лев угла
+  // моба, сама стрелка смещена в верх-лево; покачивается по диагонали — «тычет» в моба
+  const img = art.arrowRD;
+  if(img){
+    const sz = 31, bob = (Math.sin(last*0.006)+1) * 6;
+    const tipX = d.x - bob, tipY = d.y - bob;
+    cx.drawImage(img, Math.round(tipX - sz), Math.round(tipY - sz), sz, sz);
+  }
   // текст-подсказка — это HTML-элемент textEl поверх холста (см. buildTextEl)
-}
-
-// белая стрелка (линия + треугольный наконечник) из (x1,y1) в (x2,y2)
-function strokeArrow(x1, y1, x2, y2, w){
-  const ang = Math.atan2(y2-y1, x2-x1), head = 16;
-  cx.strokeStyle = '#fff'; cx.fillStyle = '#fff';
-  cx.lineWidth = w; cx.lineCap = 'round';
-  cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke();
-  cx.beginPath();
-  cx.moveTo(x2, y2);
-  cx.lineTo(x2 - head*Math.cos(ang - Math.PI/6), y2 - head*Math.sin(ang - Math.PI/6));
-  cx.lineTo(x2 - head*Math.cos(ang + Math.PI/6), y2 - head*Math.sin(ang + Math.PI/6));
-  cx.closePath(); cx.fill();
 }

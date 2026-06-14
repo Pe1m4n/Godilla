@@ -21,12 +21,26 @@ const sessionLogger = {
   },
 };
 
+// itch-плагин: вырезает атрибут crossorigin из тегов <script type="module">
+// и <link rel="stylesheet">, которые Vite добавляет в собранный index.html.
+// На itch.io игра показывается во вложенном окне (iframe) с CDN, который не отдаёт
+// CORS-заголовки. Модульные скрипты и такие стили браузер грузит в строгом режиме
+// проверки источника — и без заголовков блокирует их. Итог: серый экран, ни логики,
+// ни оформления. Без crossorigin браузер грузит файлы как обычные (они лежат рядом,
+// один источник) — и игра запускается. Локально это ни на что не влияет.
+const stripCrossorigin = {
+  name: 'strip-crossorigin',
+  transformIndexHtml(html){
+    return html.replace(/\s+crossorigin/g, '');
+  },
+};
+
 // base: './' — пути в собранном index.html будут относительными.
 // Это обязательно для itch.io: игра там лежит не в корне домена,
 // а в подпапке, и абсолютные пути ('/assets/...') не находятся.
 export default defineConfig({
   base: './',
-  plugins: [sessionLogger],
+  plugins: [sessionLogger, stripCrossorigin],
   build: {
     outDir: 'dist',
     assetsInlineLimit: 0, // не вшивать мелкие картинки/звуки в JS — пусть лежат файлами

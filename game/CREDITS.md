@@ -12,3 +12,7 @@
 ## VFX
 
 - **Devkidd** — fire VFX — https://devkidd.itch.io/
+
+## Cursor
+
+- **Lintnaya** — https://lintnaya.itch.io/

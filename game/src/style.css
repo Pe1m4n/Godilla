@@ -7,9 +7,13 @@
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{height:100%;overflow:hidden;background:#14121c;}
-body{display:flex;align-items:center;justify-content:center;font-family:var(--font-body);}
+/* системный курсор скрыт на всей странице (включая fixed-слои вне #wrap: шторку
+   перехода, зерно, угловые кнопки) — иначе он накладывается на нарисованную руку */
+body{display:flex;align-items:center;justify-content:center;font-family:var(--font-body);cursor:none;}
 #wrap{position:relative;transform-origin:center center;cursor:none;}
-#wrap *{cursor:none !important;}
+/* системный курсор скрыт на всех экранах — везде рисуем свою «руку» (cursorEl);
+   при наведении на кнопки рука меняется на кадр-указатель (см. updateCursor) */
+#wrap, #wrap *{cursor:none !important;}
 canvas{
   display:block;
   image-rendering:pixelated;
@@ -20,40 +24,43 @@ canvas{
 #hud{
   position:absolute;top:10px;left:12px;right:12px;
   display:flex;justify-content:space-between;align-items:flex-start;
-  pointer-events:none;color:var(--ink);
+  pointer-events:none;color:#f4ead2; /* светлый текст на тёмных плашках (как панель победы) */
   font-family:var(--font-pixel);
   font-size:10px;line-height:1.7;text-transform:uppercase;
 }
-.pill{background:rgba(255,253,245,.85);border:2px solid var(--ink);padding:4px 10px;}
-#hpbar{width:160px;height:12px;border:2px solid var(--ink);background:rgba(255,253,245,.85);margin-top:4px;}
-#hpfill{height:100%;background:var(--mountain);width:100%;transition:width .25s;}
-#xpbar{width:220px;height:10px;border:2px solid var(--ink);background:rgba(255,253,245,.85);margin:4px auto 0;}
+/* плашки HUD — тёмное дерево с коричневой рамкой, в тон диалоговой панели победы */
+.pill{background:rgba(46,35,22,.85);border:2px solid #5a4226;color:#f4ead2;padding:4px 10px;}
+/* ширина 100% — бар занимает ту же ширину, что и плашка «Прочность врат» над ним */
+#hpbar{width:100%;height:12px;border:2px solid #5a4226;background:rgba(46,35,22,.85);margin-top:4px;}
+#hpfill{height:100%;background:#a8542a;width:100%;transition:width .25s;}
+#xpbar{width:220px;height:10px;border:2px solid #5a4226;background:rgba(46,35,22,.85);margin:4px auto 0;}
 #xpfill{height:100%;background:#d4a017;width:0%;transition:width .2s;}
+/* выбор перков — в палитре деревянной панели победы */
 #lvlOverlay{
   position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  background:rgba(26,22,38,.82);color:var(--ui);text-align:center;gap:16px;
+  background:rgba(26,22,38,.82);color:#f4ead2;text-align:center;gap:16px;
 }
-#lvlOverlay h1{font-family:var(--font-pixel);font-size:20px;letter-spacing:1px;text-transform:uppercase;}
-#lvlOverlay p{color:#cfc9e6;font-size:15px;}
+#lvlOverlay h1{font-family:var(--font-pixel);font-size:20px;letter-spacing:1px;text-transform:uppercase;color:#f4ead2;}
+#lvlOverlay p{font-family:var(--font-pixel);font-size:10px;line-height:1.8;color:#cdbfa6;}
 #skillCards{display:flex;gap:14px;}
 .skill-card{
   position:relative;overflow:hidden; /* для полоски удержания .hold-fill */
-  font-family:var(--font-body);width:200px;min-height:130px;padding:12px;
-  background:var(--ui);color:var(--ink);border:3px solid var(--ink);
-  cursor:pointer;text-align:left;font-size:13px;line-height:1.5;
+  font-family:var(--font-pixel);width:200px;min-height:140px;padding:14px 12px;
+  background:#2e2316;color:#f4ead2;border:3px solid #5a4226;
+  cursor:none;text-align:left;font-size:8px;line-height:1.7; /* системный курсор скрыт — рисуем свою «руку» (cursorEl) */
   user-select:none;
 }
-.skill-card:hover{background:#ffd76a;}
+.skill-card:hover{background:#3f3124;}
 /* пока держишь ЛКМ — карта «вдавливается» и подсвечивается, идёт выбор */
-.skill-card.holding{background:#ffd76a;transform:scale(.97);}
+.skill-card.holding{background:#665443;transform:scale(.97);}
 /* полоса прогресса удержания: тянется слева направо за время CFG.leveling.pickHold */
 .skill-card .hold-fill{
   position:absolute;left:0;bottom:0;width:100%;height:6px;
   background:#d4a017;transform:scaleX(0);transform-origin:left center;
   pointer-events:none;
 }
-.skill-card b{display:block;font-family:var(--font-pixel);font-size:10px;line-height:1.5;margin-bottom:8px;text-transform:uppercase;}
-.skill-card .lvl-tag{margin-top:8px;color:#7a4a32;font-size:12px;}
+.skill-card b{display:block;font-family:var(--font-pixel);font-size:10px;line-height:1.6;margin-bottom:10px;text-transform:uppercase;color:#e8d3a0;}
+.skill-card .lvl-tag{margin-top:10px;color:#c9bca4;font-size:8px;}
 /* ── стартовый экран: фон-комната + письмо на весь нижний край ── */
 #startScreen{
   position:absolute;inset:0;
@@ -102,6 +109,9 @@ canvas{
 #letter button{
   font-family:var(--font-pixel);cursor:pointer;border:none;
   background:#3f3124;color:#f1e7d4;
+  /* срезаны углы по 3px по диагонали — пиксельная фаска вместо прямых углов */
+  clip-path:polygon(3px 0, calc(100% - 3px) 0, 100% 3px, 100% calc(100% - 3px),
+    calc(100% - 3px) 100%, 3px 100%, 0 calc(100% - 3px), 0 3px);
 }
 #letter button:hover{background:#665443;}
 #letter button:focus-visible{outline:2px dashed #f1e7d4;outline-offset:2px;}
@@ -155,50 +165,73 @@ canvas{
 #ov-win-buttons button#endlessBtn:hover{background:#4a3a29;color:#f1e7d4;}
 #ov-win-buttons button:focus-visible{outline:2px dashed #f1e7d4;outline-offset:2px;}
 /* шестерёнка настроек — слева снизу */
-#settingsBtn{
-  position:absolute;left:12px;bottom:14px;z-index:5;
-  font-family:var(--font-body);font-size:22px;line-height:1;
-  width:40px;height:40px;padding:0;
-  background:rgba(255,253,245,.85);color:var(--ink);
-  border:2px solid var(--ink);cursor:pointer;
+/* ВРЕМЕННЫЙ дебаг-таймер боя — справа сверху, под полоской прочности врат */
+#debugTimer{
+  position:absolute;top:56px;right:12px;z-index:6;
+  pointer-events:none;
+  font-family:var(--font-pixel);font-size:12px;line-height:1;
+  color:#fffdf5;background:rgba(26,22,38,.7);
+  padding:5px 8px;border:2px solid rgba(255,253,245,.5);
 }
-#settingsBtn:hover{background:#ffd76a;}
+/* кнопки-иконки (настройки слева внизу, пауза справа сверху) — деревянный стиль панели победы */
+#settingsBtn, #pauseBtn{
+  position:absolute;z-index:5;
+  font-family:var(--font-body);font-size:20px;line-height:1;
+  width:40px;height:40px;padding:0;
+  background:#2e2316;color:#f4ead2;
+  border:2px solid #5a4226;cursor:pointer;
+}
+#settingsBtn:hover, #pauseBtn:hover{background:#665443;}
+#settingsBtn{left:12px;bottom:14px;}
+/* пауза — справа сверху, под дебаг-таймером */
+#pauseBtn{top:90px;right:12px;}
+/* ВРЕМЕННАЯ дебаг-кнопка: неуязвимость замка вкл/выкл — под кнопкой паузы */
+#godGateBtn{
+  position:absolute;top:138px;right:12px;z-index:5;
+  font-family:var(--font-pixel);font-size:8px;letter-spacing:.5px;line-height:1.4;
+  padding:7px 9px;white-space:nowrap;
+  background:#2e2316;color:#f4ead2;
+  border:2px solid #5a4226;cursor:pointer;
+}
+#godGateBtn:hover{background:#665443;}
+/* включённое состояние — красная «дебажная» подсветка */
+#godGateBtn.on{background:#7a1f1f;color:#ffe0d0;border-color:#1a1626;}
 /* модалка настроек (пауза игры) */
 #settingsPanel{
   position:absolute;inset:0;z-index:40;
   display:flex;align-items:center;justify-content:center;
   background:rgba(26,22,38,.82);
 }
+/* настройки — деревянная панель в тон экрану победы и остальным меню */
 #settingsBox{
-  background:var(--ui);color:var(--ink);border:3px solid var(--ink);
-  box-shadow:0 14px 40px rgba(0,0,0,.45);
-  padding:24px 28px;min-width:300px;
+  background:#2e2316;color:#f4ead2;border:4px solid #5a4226;
+  box-shadow:0 14px 44px rgba(0,0,0,.5);
+  padding:26px 30px;min-width:320px;
   display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center;
 }
-#settingsBox h1{font-family:var(--font-pixel);font-size:16px;letter-spacing:1px;text-transform:uppercase;margin:0;}
-#volRow{display:flex;align-items:center;gap:10px;font-family:var(--font-body);font-size:15px;}
-#volRow #masterVol{width:150px;accent-color:#c0392b;cursor:pointer;}
-#volVal{min-width:46px;text-align:left;}
+#settingsBox h1{font-family:var(--font-pixel);font-size:16px;letter-spacing:1px;text-transform:uppercase;margin:0;color:#f4ead2;}
+#volRow{display:flex;align-items:center;gap:10px;font-family:var(--font-pixel);font-size:9px;line-height:1.6;text-transform:uppercase;}
+#volRow #masterVol{width:150px;accent-color:#d4a017;cursor:pointer;}
+#volVal{min-width:52px;text-align:left;}
 #muteRow{display:flex;gap:12px;}
-.toggle{
-  font-family:var(--font-body);font-size:14px;
-  padding:8px 14px;background:var(--ui);color:var(--ink);
-  border:2px solid var(--ink);cursor:pointer;
+/* тумблеры музыки/звука и «Продолжить» — кнопки тёмного дерева с пиксельной фаской, как в меню */
+.toggle, #settingsClose{
+  font-family:var(--font-pixel);letter-spacing:1px;text-transform:uppercase;
+  background:#3f3124;color:#f1e7d4;border:none;cursor:pointer;
+  clip-path:polygon(3px 0, calc(100% - 3px) 0, 100% 3px, 100% calc(100% - 3px),
+    calc(100% - 3px) 100%, 3px 100%, 0 calc(100% - 3px), 0 3px);
 }
-.toggle:hover{background:#ffd76a;}
-.toggle.off{opacity:.5;text-decoration:line-through;}
-#settingsClose{
-  font-family:var(--font-pixel);font-size:10px;text-transform:uppercase;
-  padding:10px 18px;background:#ffd76a;color:var(--ink);
-  border:3px solid var(--ink);cursor:pointer;
-}
-#settingsClose:hover{background:#ffcf3a;}
+.toggle{font-size:9px;padding:9px 12px;}
+.toggle:hover{background:#665443;}
+.toggle.off{background:#33271c;color:#c9bca4;text-decoration:line-through;}
+#settingsClose{font-size:11px;padding:11px 18px;}
+#settingsClose:hover{background:#665443;}
 #fsBtn{
   position:fixed;right:12px;top:12px;z-index:10;
   font-family:var(--font-body);font-size:20px;line-height:1;
   width:40px;height:40px;padding:0;
   background:rgba(255,253,245,.85);color:var(--ink);
-  border:2px solid var(--ink);cursor:pointer;
+  border:2px solid var(--ink);cursor:none;
 }
 #fsBtn:hover{background:#ffd76a;}
 /* ВРЕМЕННАЯ дебаг-кнопка финала — справа снизу (потом убрать вместе с обработчиком) */
@@ -207,7 +240,7 @@ canvas{
   font-family:var(--font-pixel);font-size:9px;letter-spacing:1px;
   padding:8px 12px;
   background:#7a1f1f;color:#ffe0d0;
-  border:2px solid #1a1626;cursor:pointer;
+  border:2px solid #1a1626;cursor:none;
 }
 #debugFinaleBtn:hover{background:#a23030;}
 /* плёночное зерно поверх всего экрана: картинку шума и прозрачность подставляет game.js (блок GRAIN) */

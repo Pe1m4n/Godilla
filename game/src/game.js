@@ -13,7 +13,7 @@ import {
   tutorialOnFirstDemon, tutorialComplete, drawTutorial,
   tutorialFrozen, tutorialMsgActive, tutorialMsgKey, tutorialMsgDismiss,
   tutorialTryMessage, dismissTutorialMessage, drawTutorialMask,
-  tutorialTick, tutorialMsgLocked, tutorialActiveLocked,
+  tutorialTick, tutorialMsgLocked, tutorialActiveLocked, tutorialMsgTime,
 } from './tutorial.js';
 import { initUIText, floatText, label, hideLabel } from './uitext.js';
 import {
@@ -82,20 +82,24 @@ function updateClouds(dt){
     if(c.x + w < -40) c.x = W + 40;       // уплыло влево — заводим справа
     else if(c.x > W + 40) c.x = -w - 40;
   }
-  // время от времени заряжаем спокойное облако (только в бою; нужно место до башни)
-  if(running && !choosing){
+  // стандартная зарядка туч — только ПОСЛЕ срежиссированной первой грозы (см. updateIntroScript)
+  if(running && !choosing && introLightningDone){
     nextCharge -= dt;
     if(nextCharge <= 0){
-      const idle = clouds.filter(c => !c.charge && c.x + cloudW(c)/2 > WALL.x + 140);
-      if(idle.length){
-        const c = idle[(Math.random()*idle.length)|0];
-        c.charge = 'storm';
-        floatText(c.x + cloudW(c)/2, c.y + cloudH(c)/2, 'ГРОЗА — КЛИКНИ!', '#2a3a7a', 1.8);
-      }
+      chargeCloud();
       // «Громовержец»: тучи заряжаются чаще
       nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax) / (1 + CFG.skills.stormcaller.mult * sk('stormcaller'));
     }
   }
+}
+
+// зарядить одно спокойное облако грозой (нужно место до башни)
+function chargeCloud(){
+  const idle = clouds.filter(c => !c.charge && c.x + cloudW(c)/2 > WALL.x + 140);
+  if(!idle.length) return;
+  const c = idle[(Math.random()*idle.length)|0];
+  c.charge = 'storm';
+  floatText(c.x + cloudW(c)/2, c.y + cloudH(c)/2, 'ГРОЗА — КЛИКНИ!', '#2a3a7a', 1.8);
 }
 
 // клик по грозовой туче: бьёт молнией строго вниз
@@ -142,7 +146,7 @@ const GODRAYS = {
 // Спрайт каждой струйки выбирается случайно (smoke1..smoke4); новые рисуются
 // поверх старых (просто порядок в массиве). Анимируется всегда — как облака.
 const SMOKE = {
-  debug:    false, // ДЕБАГ: рисовать красные точки в местах спауна
+  debug:    false, // ДЕБАГ: рисовать красные точки в местах спауна (трубы + жаровни)
   vents: [ {x:3, y:392}, {x:21, y:392}, {x:42, y:392} ], // верх каждой трубы
   every:    0.30,  // средний интервал между затяжками на одной трубе, сек (часто — густой дым)
   everyVar: 0.5,   // случайный разброс интервала (× every)
@@ -154,6 +158,11 @@ const SMOKE = {
   size0:    7,     // стартовый размер клуба, px
   growTime: 4.2,   // за сколько секунд клуб дорастает до полного размера
   alpha:    0.85,  // постоянная прозрачность (без проявления/затухания)
+  // дым из жаровен (когда разгорелись): тот же дым, но крупнее с самого начала
+  // и чуть чернее
+  brazier:  { every: 0.22, dark: 0.35, size0: 13, grow: 22, yOff: -10 },
+  // дым с горящего моба: ещё темнее, почти чёрный; размер от размера моба
+  burn:     { every: 0.08, dark: 0.72, size0Mul: 0.40, growMul: 0.55, riseMul: 1.3, life: 1.5 },
 };
 
 // ── вечерний оттенок (полноэкранный спрайт Tint) ─────────────────────
@@ -171,22 +180,61 @@ function tintAlpha(){
   return Math.max(0, Math.min(TINT.maxAlpha, (min - TINT.startMin) * TINT.perMin));
 }
 let smokePuffs = [];
-// у каждой трубы — свой таймер до следующей затяжки
-let smokeTimers = SMOKE.vents.map(() => rnd(0, SMOKE.every));
+// Один клуб дыма. opts: dark (0..1 — сколько черноты подмешать), size0/grow
+// (размер; по умолчанию — как у труб), riseMul (множитель скорости подъёма).
+function spawnSmoke(x, y, opts = {}){
+  smokePuffs.push({
+    x0: x, y, t: 0,
+    vx: -SMOKE.drift * rnd(0.7, 1.3),
+    vy: -SMOKE.rise  * rnd(0.8, 1.2) * (opts.riseMul || 1),
+    phase: rnd(0, Math.PI*2),                  // фаза покачивания
+    spr: 'smoke' + (1 + (Math.random()*4|0)),  // случайный спрайт 1..4
+    dark: opts.dark || 0,
+    size0: opts.size0 != null ? opts.size0 : SMOKE.size0,
+    grow:  opts.grow  != null ? opts.grow  : SMOKE.grow,
+    life:  opts.life != null ? opts.life : null, // null → живёт пока не уйдёт за край
+  });
+}
+
+// Затемнённые версии спрайтов дыма кэшируются по «спрайт|чернота»: чернота
+// подмешивается только в непрозрачные пиксели (source-atop), форма сохраняется.
+const smokeDarkCache = {};
+function darkSmokeSprite(sprKey, amount){
+  const key = sprKey + '|' + Math.round(amount*100);
+  if(smokeDarkCache[key]) return smokeDarkCache[key];
+  const img = art[sprKey];
+  if(!img) return null;                          // ещё не догрузилось
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0);
+  g.globalCompositeOperation = 'source-atop';
+  g.globalAlpha = amount; g.fillStyle = '#000';
+  g.fillRect(0, 0, c.width, c.height);
+  return (smokeDarkCache[key] = c);
+}
+
+// у каждой трубы и каждой жаровни — свой таймер до следующей затяжки
+let smokeTimers   = SMOKE.vents.map(() => rnd(0, SMOKE.every));
+let brazierTimers = BRAZIERS.map(() => rnd(0, SMOKE.brazier.every));
 function updateSmoke(dt){
-  // спавн новых клубов из каждой трубы
+  // спавн новых клубов из каждой трубы домиков
   for(let i = 0; i < SMOKE.vents.length; i++){
     smokeTimers[i] -= dt;
     if(smokeTimers[i] <= 0){
-      const v = SMOKE.vents[i];
-      smokePuffs.push({
-        x0: v.x, y: v.y, t: 0,
-        vx: -SMOKE.drift * rnd(0.7, 1.3),
-        vy: -SMOKE.rise  * rnd(0.8, 1.2),
-        phase: rnd(0, Math.PI*2),       // фаза покачивания
-        spr: 'smoke' + (1 + (Math.random()*4|0)), // случайный спрайт 1..4
-      });
+      spawnSmoke(SMOKE.vents[i].x, SMOKE.vents[i].y);
       smokeTimers[i] = SMOKE.every * (1 + rnd(-SMOKE.everyVar, SMOKE.everyVar));
+    }
+  }
+  // дым из жаровен — только когда они разгорелись
+  if(braziersLit){
+    const b = SMOKE.brazier;
+    for(let i = 0; i < BRAZIERS.length; i++){
+      brazierTimers[i] -= dt;
+      if(brazierTimers[i] <= 0){
+        spawnSmoke(BRAZIERS[i].x, BRAZIERS[i].y + b.yOff, { dark: b.dark, size0: b.size0, grow: b.grow });
+        brazierTimers[i] = b.every * (1 + rnd(-SMOKE.everyVar, SMOKE.everyVar));
+      }
     }
   }
   // движение/старение; вычисляем экранный x с учётом покачивания
@@ -198,31 +246,133 @@ function updateSmoke(dt){
   }
   // убираем ТОЛЬКО когда клуб полностью пересёк край экрана (влево или вверх) —
   // без затухания: пропадает, лишь когда даже его дальний край ушёл за границу
-  const half = (SMOKE.size0 + SMOKE.grow) / 2; // макс. полуширина клуба
-  smokePuffs = smokePuffs.filter(p => p.x + half > 0 && p.y > 0);
+  smokePuffs = smokePuffs.filter(p =>
+    (p.life == null || p.t < p.life) && p.x + (p.size0 + p.grow)/2 > 0 && p.y > 0);
 }
 function drawSmoke(){
   for(const p of smokePuffs){
-    const img = art[p.spr];
+    const img = p.dark > 0 ? darkSmokeSprite(p.spr, p.dark) : art[p.spr];
     if(!img) continue;
     const k = Math.min(1, p.t / SMOKE.growTime); // 0..1 рост размера
-    const sz = SMOKE.size0 + SMOKE.grow * k;      // клуб растёт по мере подъёма
-    // постоянная прозрачность: не проявляется и не затухает, просто уходит за край
-    cx.globalAlpha = SMOKE.alpha;
+    const sz = p.size0 + p.grow * k;              // клуб растёт по мере подъёма
+    // дым труб/жаровен — постоянная прозрачность (уходит за край). Дым с life
+    // (мобы) плавно гаснет в последней половине жизни и исчезает.
+    let a = SMOKE.alpha;
+    if(p.life != null) a *= Math.min(1, (1 - p.t / p.life) / 0.5);
+    cx.globalAlpha = a;
     const h = sz * (img.height / img.width);
     // без Math.round: при медленном подъёме округление до целого пикселя
     // даёт рывки (дрожь). Дыму субпиксельное положение не вредит.
     cx.drawImage(img, p.x - sz/2, p.y - h, sz, h);
   }
   cx.globalAlpha = 1;
-  // ДЕБАГ: красная точка в каждой точке спауна (поставь false, чтобы убрать)
+  // ДЕБАГ: красные точки в местах спауна — трубы домиков (дым) и жаровни (огонь+дым).
+  // Поставь SMOKE.debug=false, чтобы убрать.
   if(SMOKE.debug){
     cx.fillStyle = '#ff0000';
     for(const v of SMOKE.vents){
-      cx.beginPath();
-      cx.arc(v.x, v.y, 1.5, 0, Math.PI*2);
-      cx.fill();
+      cx.beginPath(); cx.arc(v.x, v.y, 1.5, 0, Math.PI*2); cx.fill();
     }
+    for(const bz of BRAZIERS){
+      cx.beginPath(); cx.arc(bz.x, bz.y, 1.5, 0, Math.PI*2); cx.fill();
+    }
+  }
+}
+
+// ── огонь на жаровнях: квадратные пиксели ────────────────────────────
+// Пиксель спавнится крупным и почти белым, поднимается вверх, уменьшаясь и
+// меняя цвет по стадиям (белый → жёлтый → оранжевый → красный), потом исчезает.
+// Смена цвета и уменьшение быстрые (короткая жизнь частицы). Рисуется квадратами
+// fillRect (целые пиксели), без 'lighter' — чтобы цвета были честными, не сливались в белый.
+const BRZ = {
+  colors: ['#efe8e3', '#e2a028', '#df7a3c', '#be3824'], // почти белый → жёлтый → оранж → красный
+  every:    0.04,  // как часто каждая жаровня выбрасывает пиксель, сек
+  size0Min: 6.6,   // стартовый размер пикселя (крупный), px (+10%)
+  size0Max: 9.9,
+  rise:     55,    // скорость подъёма, px/сек
+  riseVar:  0.4,   // разброс скорости (× rise)
+  drift:    6,     // боковой разброс скорости, px/сек
+  spread:   5,     // горизонтальный разброс точки спауна вокруг центра жаровни, px
+  life:     0.6,   // сек — короткая жизнь (быстрая смена цвета и уменьшение)
+  lifeVar:  0.3,   // разброс жизни (× life)
+  bomberScale: 0.5,// фитиль бомбера: тот же огонь, но мельче (без дыма)
+  // огонь по телу горящего моба — масштаб и густота от размера моба
+  mob: { every: 0.06, widthPer: 12, maxCount: 14, sizeRef: 40, scaleMin: 0.45, scaleMax: 1.5 },
+};
+// линейная интерполяция между двумя hex-цветами (t 0..1)
+function lerpHex(a, b, t){
+  const p = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+  const [ar,ag,ab] = p(a), [br,bg,bb] = p(b);
+  return `rgb(${Math.round(ar+(br-ar)*t)},${Math.round(ag+(bg-ag)*t)},${Math.round(ab+(bb-ab)*t)})`;
+}
+let brzFire = [];
+let brzTimers = BRAZIERS.map(() => 0);
+// один пиксель огня (жаровни/фитиль бомбера). scale<1 — мельче (размер, разлёт,
+// подъём масштабируются), цвета и время жизни — те же.
+function spawnBrzFire(x, y, scale = 1){
+  brzFire.push({
+    x: x + rnd(-BRZ.spread, BRZ.spread) * scale,
+    y: y + rnd(-2, 2) * scale,
+    vx: rnd(-BRZ.drift, BRZ.drift) * scale,
+    vy: -BRZ.rise * (1 + rnd(-BRZ.riseVar, BRZ.riseVar)) * scale,
+    t: 0, life: BRZ.life * (1 + rnd(-BRZ.lifeVar, BRZ.lifeVar)),
+    size0: rnd(BRZ.size0Min, BRZ.size0Max) * scale,
+  });
+}
+// огонь по телу сущности шириной w / высотой h (от x0,y0): масштаб и густота
+// пикселей берутся от размера — мелкий моб коптит слабо, циклоп — мощно
+function emitMobFire(x0, y0, w, h){
+  const m = BRZ.mob;
+  const sc = Math.max(m.scaleMin, Math.min(m.scaleMax, w / m.sizeRef));
+  const n = Math.max(1, Math.min(m.maxCount, Math.round(w / m.widthPer)));
+  for(let j = 0; j < n; j++)
+    spawnBrzFire(x0 + rnd(w*0.15, w*0.85), y0 + rnd(h*0.2, h*0.65), sc);
+}
+function updateBrzFire(dt){
+  if(braziersLit){
+    for(let i = 0; i < BRAZIERS.length; i++){
+      brzTimers[i] -= dt;
+      while(brzTimers[i] <= 0){
+        brzTimers[i] += BRZ.every;
+        spawnBrzFire(BRAZIERS[i].x, BRAZIERS[i].y, 1);
+      }
+    }
+  }
+  for(const d of demons){
+    if(d.state === 'offscreen' || d.state === 'burrow') continue;
+    const s = sizeOf(d);
+    // фитиль бомбера — тот же огонь, мельче (скейл 0.5), без дыма
+    if(d.type === 'bomber'){
+      d.fuseT = (d.fuseT || 0) - dt;
+      while(d.fuseT <= 0){
+        d.fuseT += BRZ.every;
+        spawnBrzFire(d.x + s/2, d.y + s*0.06, BRZ.bomberScale);
+      }
+    }
+    // горящий моб — пиксельный огонь по всему телу, под его размер
+    if(burning(d)){
+      d.fireT = (d.fireT || 0) - dt;
+      while(d.fireT <= 0){ d.fireT += BRZ.mob.every; emitMobFire(d.x, d.y, s, s); }
+    }
+  }
+  // горящие циклопы — огонь под размер тела босса
+  for(const c of cyclopes){
+    if(!burning(c)) continue;
+    c.fireT = (c.fireT || 0) - dt;
+    while(c.fireT <= 0){ c.fireT += BRZ.mob.every; emitMobFire(c.x, c.y, CYC_W, CYC_H); }
+  }
+  for(const p of brzFire){ p.t += dt; p.x += p.vx*dt; p.y += p.vy*dt; }
+  brzFire = brzFire.filter(p => p.t < p.life);
+}
+function drawBrzFire(){
+  const nseg = BRZ.colors.length - 1;
+  for(const p of brzFire){
+    const k = p.t / p.life;                       // 0..1 прогресс жизни
+    const seg = k * nseg;
+    const i = Math.min(nseg - 1, Math.floor(seg)); // на каком отрезке цветов
+    cx.fillStyle = lerpHex(BRZ.colors[i], BRZ.colors[i+1], seg - i);
+    const sz = Math.max(1, Math.round(p.size0 * (1 - k))); // уменьшается к концу
+    cx.fillRect(Math.round(p.x - sz/2), Math.round(p.y - sz/2), sz, sz);
   }
 }
 
@@ -277,7 +427,7 @@ let fireballs = [];     // огненные шары дракона: летят 
 let pendingFB = [];     // отложенные выстрелы дракона (задержка между двумя в ярости)
 let heldFireball = null;// пойманный фаербол в руке (следует за курсором)
 let dragon = null;      // 3-й босс, пока null — не вышел
-let braziersLit = false;// разгорелись ли жаровни на крыше (на 2-й минуте)
+let braziersLit = false;// разгорелись ли жаровни на крыше (на 2:10, см. CFG.fire.litAt)
 // контроллер появления боссов: каждый выходит один раз в свой момент
 let boss1Spawned = false, boss2Spawned = false, boss2Dead = false;
 let dragonSpawned = false, dragonTimer = 0, won = false;
@@ -286,6 +436,11 @@ let dragonSpawned = false, dragonTimer = 0, won = false;
 let finale = null, finaleT = 0;
 // врата неуязвимы от смерти дракона до момента, когда молнии Тора выкосят всю орду
 let gateInvuln = false;
+// ДЕБАГ: тумблер «неуязвимый замок» (кнопка рядом с паузой). По умолчанию выкл.
+// Не сбрасывается при рестарте — выбор отладчика держится между партиями.
+let debugGodGate = false;
+// врата не получают урон: финальная неуязвимость ИЛИ включён дебаг-тумблер
+function gateImmune(){ return gateInvuln || debugGodGate; }
 // размеры спрайта дракона (рисуется процедурно — см. drawDragon)
 const DRG_W = CFG.dragon.w, DRG_H = CFG.dragon.h;
 // данные законсервированной панели заклинаний (см. drawSpellUI — сейчас не вызывается)
@@ -304,7 +459,10 @@ let hugeSeen = false; // появился ли уже первый «huge» — 
 let seenTypes = new Set();
 let lastDebutAt = -999;
 let lastPickedDebut = false;
+let firstSpawnPending = true; // первый моб партии (туториальный) выходит сразу на экране
 const TUTORIAL_DEBUT_TYPES = new Set(['big', 'caster', 'mole', 'roller']);
+// одноразовые события срежиссированного начала (см. updateIntroScript / CFG.intro)
+let introBatch1Done = false, introBatch2Done = false, introSwirlDone = false, introLightningDone = false;
 const FIRE_PERKS = new Set(['pyro', 'inferno', 'wildfire', 'emberSmash', 'stormConduit', 'wildSpread', 'fireVortex', 'infernoThrow', 'ashSlam']);
 let player = { level: 0, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
 let pendingLevels = 0, choosing = false;
@@ -340,14 +498,16 @@ function perkEligible(id){
   return !FIRE_PERKS.has(id) || firePerksUnlocked();
 }
 
-function spawnDemon(type){
+// onScreen=true — моб появляется сразу на экране (у правого края), как раньше; так
+// выходят туторные мобы. По умолчанию мобы спавнятся ЗА правым краем и заходят из-за экрана.
+function spawnDemon(type, onScreen = false){
   // первый «huge» за партию — переключаем музыку с вступительной на боевую
   if(type === 'huge' && !hugeSeen){ hugeSeen = true; music.toCombat(); }
   const T = TYPES[type];
   const d = {
     type,
     hp: T.hp,
-    x: W - 60 + rnd(-10,10),
+    x: onScreen ? (W - 60 + rnd(-10,10)) : (W + CFG.stream.spawnOffscreen + rnd(0,24)),
     y: 0,
     vx: 0, vy: 0,
     speed: rnd(T.speedMin, T.speedMax) + gameTime * CFG.stream.speedPerSec,
@@ -361,6 +521,7 @@ function spawnDemon(type){
     grounded: true,          // для драг-ударов об землю
     armed: false,            // «заряжен» броском: наносит урон, пока не коснулся земли
     noEyeDmg: false,         // торнадо заряжает падение, но не должно бить циклопа в глаз
+    windTossed: false,       // подброшен ураганом — заброшенный за стену не вредит вратам
     hitsLeft: 0,             // сколько мобов ещё может сшибить за этот бросок (скилл «Таран»)
     cycHit: 0,               // таймер: недавно отскочил от циклопа (защита от болтанки между двумя)
     swing: 0,                // пик скорости замаха в руке (затухает) — по нему считается удар об землю/стену
@@ -390,7 +551,7 @@ function returnFromOffscreen(d){
   d.x = W + 10; d.y = GROUND_Y - s;
   d.vx = d.vy = 0; d.rot = 0; d.rotV = 0;
   d.armed = false; d.noEyeDmg = false; d.hitsLeft = 0; d.noDmg = false; d.grounded = true;
-  d.swing = 0; d.walled = false; d.roofed = false;
+  d.swing = 0; d.walled = false; d.roofed = false; d.windTossed = false;
 }
 
 function sendOffscreen(d){
@@ -554,6 +715,14 @@ function updateDemonBurn(d, dt){
       fire: true,
     });
   }
+  // тёмный дым с горящего моба (почти чёрный, размером от моба)
+  d.smokeT = (d.smokeT || 0) - dt;
+  if(d.smokeT <= 0){
+    const bs = SMOKE.burn;
+    d.smokeT = bs.every;
+    spawnSmoke(d.x + s*rnd(.35,.65), d.y + s*0.2,
+      { dark: bs.dark, size0: s*bs.size0Mul, grow: s*bs.growMul, riseMul: bs.riseMul, life: bs.life });
+  }
   while(d.burnTick <= 0 && demons.includes(d)){
     d.burnTick += FIRE.tickEvery;
     hurt(d, FIRE.tickDmg + sk('wildfire'), 220);
@@ -583,6 +752,14 @@ function updateCyclopsBurn(c, dt){
       size: rnd(2,5),
       fire: true,
     });
+  }
+  // тёмный дым с горящего циклопа (крупный — размер от тела босса)
+  c.smokeT = (c.smokeT || 0) - dt;
+  if(c.smokeT <= 0){
+    const bs = SMOKE.burn;
+    c.smokeT = bs.every;
+    spawnSmoke(c.x + rnd(CYC_W*.3, CYC_W*.7), c.y + CYC_H*0.2,
+      { dark: bs.dark, size0: CYC_W*0.12, grow: CYC_W*0.18, riseMul: bs.riseMul, life: bs.life });
   }
   while(c.burnTick <= 0 && cyclopes.includes(c)){
     c.burnTick += FIRE.tickEvery;
@@ -701,8 +878,11 @@ function splat(d, sp){
   const s = sizeOf(d), px = d.x + s/2, py = d.y + s/2;
   const col = bloodCol(d.type);
   const big = d.type !== 'small';
+  // у dog крови как у small (мелкий быстрый моб того же размера px=2.5):
+  // иначе луж/брызг как у крупных. Текст-«хряск» и тряску оставляем по big.
+  const bloodBig = big && d.type !== 'dog';
   // размер лужи фиксирован по типу моба — от силы броска не зависит
-  const maxR = d.type==='huge' ? rnd(34,46) : big ? rnd(26,38) : rnd(13,20);
+  const maxR = d.type==='huge' ? rnd(34,46) : bloodBig ? rnd(26,38) : rnd(13,20);
   // разбился ОБ СТЕНУ замка: при ударе моб прижат к стене (d.x === WALL.x) ниже её
   // кромки. Тогда кровь брызгает вертикальным потёком по кладке, а не лужей на полу.
   const onWall = d.x <= WALL.x + 0.5 && d.y + s > WALL.top;
@@ -711,11 +891,11 @@ function splat(d, sp){
   } else {
     puddles.push({x:px, y:GROUND_Y, r:0, max:maxR, col, life:1, size:bloodSize(d.type)});
   }
-  for(let i=0; i < (d.type==='huge' ? 30 : big ? 22 : 12); i++){
+  for(let i=0; i < (d.type==='huge' ? 30 : bloodBig ? 22 : 12); i++){
     particles.push({
       x:px, y:py,
       vx:rnd(-280,280), vy:rnd(-460,-80),
-      col, life:rnd(.4,.9), size:rnd(2, big?6:4)
+      col, life:rnd(.4,.9), size:rnd(2, bloodBig?6:4)
     });
   }
   floatText(px, py-24, big?'ХРЯЯЯСЬ!':'хрясь!');
@@ -744,8 +924,8 @@ function bomberBoom(x, y){
 
 function reachMountain(d){
   sfx.reach();
-  // финал: врата неуязвимы — моб разбивается о стену, урона вратам нет
-  if(gateInvuln){
+  // врата неуязвимы (финал/дебаг) ИЛИ моб был заброшен за стену ураганом — без урона вратам
+  if(gateImmune() || d.windTossed){
     shake = Math.max(shake, 5);
     for(let i=0;i<8;i++){
       particles.push({x:d.x, y:d.y+sizeOf(d)/2, vx:rnd(-80,180), vy:rnd(-200,-40),
@@ -763,6 +943,10 @@ function reachMountain(d){
     particles.push({x:d.x, y:d.y+sizeOf(d)/2, vx:rnd(-80,180), vy:rnd(-200,-40),
       col:'#7a4a32', life:rnd(.3,.7), size:rnd(2,4)});
   }
+  // моб оказался ЗА стеной (центр левее врат) — его «доставили» в город, не просто
+  // дошёл до стены спереди: в первый раз показываем обучающее предупреждение
+  if(d.x + sizeOf(d)/2 < MOUNTAIN_X &&
+     tutorialTryMessage('city', CFG.tutorial.cityTitle, CFG.tutorial.citySub, 'click')) msgHi = null;
   demons.splice(demons.indexOf(d),1);
   if (hp <= 0) gameOver();
 }
@@ -771,8 +955,8 @@ function reachMountain(d){
 // Врата получают ДВОЙНОЙ урон, который этот моб нанёс бы им у стены.
 function cityBreach(d){
   sfx.reach();
-  // финал: врата неуязвимы — моб улетел в город, но урона вратам нет
-  if(gateInvuln){ demons.splice(demons.indexOf(d),1); return; }
+  // врата неуязвимы (финал/дебаг) — моб улетел в город, но урона вратам нет
+  if(gateImmune()){ demons.splice(demons.indexOf(d),1); return; }
   stats.cityBreaches++;
   const dmg = 2 * mountainDmg(TYPES[d.type].mtnDmg);
   hp = Math.max(0, hp - dmg);
@@ -813,9 +997,12 @@ function tutorialScan(dt){
       msgHi = { cyc: cyclopes[0] }; return true;
     }
   } else cycTutT = 0;
-  // циклоп с деревянным забралом (2-й босс) — жечь его огнём
+  // циклоп с деревянным забралом (2-й босс): как обычный циклоп — даём зайти поглубже
+  // (cyclopsDelay секунд; cycTutT уже считает его присутствие), потом подсказка с подсветкой
   const cv2 = cyclopes.find(c => c.visor > 0);
-  if(cv2 && tutorialTryMessage('visor', T.visorTitle, T.visorSub, 'click')){ msgHi = null; return true; }
+  if(cv2 && cycTutT >= T.cyclopsDelay && tutorialTryMessage('visor', T.visorTitle, T.visorSub, 'click')){
+    msgHi = { cyc: cv2 }; return true;
+  }
   // дракон (3-й босс) — ловить фаерболы и метать обратно
   if(dragon && tutorialTryMessage('dragon', T.dragonTitle, T.dragonSub, 'click')){ msgHi = null; return true; }
   return false;
@@ -838,6 +1025,12 @@ function tutorialHitObject(p){
     if(p.x >= c.x && p.x <= c.x+CYC_W && p.y >= c.y && p.y <= c.y+CYC_H) return true;
   }
   return false;
+}
+// попал ли клик по глазу циклопа (слабое место) — щедрый радиус, чтобы легко попасть
+function cyclopsEyeHit(p){
+  const c = msgHi && msgHi.cyc;
+  if(!c || !cyclopes.includes(c)) return false;
+  return Math.hypot(p.x - (c.x+CYC_EYE.x), p.y - (c.y+CYC_EYE.y)) <= CYC_EYE.r * 1.8;
 }
 
 // захват цели «grab»-сообщения: попал по цели → выполняем захват и закрываем подсказку
@@ -874,6 +1067,7 @@ function drawMsgHighlight(){
     tutGlow(mx, my, s*1.7);
     cx.save(); cx.translate(mx, my); if(d.flip) cx.scale(-1,1);
     cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s); cx.restore();
+    tutArrowRD(d.x, d.y); // стрелка вниз-вправо, остриём в моба
   }
   if(msgHi.boulder && demons.includes(msgHi.boulder)){
     const d = msgHi.boulder, s = sizeOf(d), br = CFG.spells.boulder.r;
@@ -890,7 +1084,28 @@ function drawMsgHighlight(){
     cx.fillStyle = '#ff3030';
     cx.beginPath(); cx.arc(c.x+CYC_EYE.x, c.y+CYC_EYE.y, CYC_EYE.r*(1+0.35*pulse), 0, Math.PI*2); cx.fill();
     cx.globalAlpha = 1;
+    tutArrowRD(c.x + CYC_W*0.5, c.y); // стрелка вниз-вправо, остриём в верх циклопа
   }
+  if(msgHi.braziers){
+    for(const bz of BRAZIERS) tutGlow(bz.x, bz.y, FIRE.brazierR * 2.4);
+    // стрелка влево-вверх, остриём на жаровни
+    tutArrowLU((BRAZIERS[0].x + BRAZIERS[1].x)/2, BRAZIERS[0].y);
+  }
+}
+// стрелки-подсказки спрайтами (31×31). Остриё указывает на (tx,ty), сам спрайт смещён
+// в сторону хвоста; лёгкое покачивание вдоль диагонали «тычет» в цель.
+const ARROW_PX = 31;
+function tutArrowRD(tx, ty){ // arrow-right-down (↘): приходит из верх-лево, остриё в правом-нижнем углу
+  const img = art.arrowRD; if(!img) return;
+  const bob = (Math.sin(last*0.006)+1) * 6;
+  const tipX = tx - bob, tipY = ty - bob;
+  cx.drawImage(img, Math.round(tipX - ARROW_PX), Math.round(tipY - ARROW_PX), ARROW_PX, ARROW_PX);
+}
+function tutArrowLU(tx, ty){ // arrow-left-up (↖): приходит из низ-право, остриё в левом-верхнем углу
+  const img = art.arrowLU; if(!img) return;
+  const bob = (Math.sin(last*0.006)+1) * 6;
+  const tipX = tx + bob, tipY = ty + bob;
+  cx.drawImage(img, Math.round(tipX), Math.round(tipY), ARROW_PX, ARROW_PX);
 }
 
 function spawnCyclops(opts = {}){
@@ -1083,10 +1298,12 @@ function updateFireballs(dt){
     if(fb.hostile){
       // долетел до стены — урон вратам (сколизил по камню), вспышка
       if(fb.x - fb.r <= MOUNTAIN_X){
-        const dmg = mountainDmg(D.grazeDmg);
-        hp = Math.max(0, hp - dmg); hpFill.style.width = hp + '%';
+        if(!gateImmune()){
+          const dmg = mountainDmg(D.grazeDmg);
+          hp = Math.max(0, hp - dmg); hpFill.style.width = hp + '%';
+          floatText(MOUNTAIN_X + 20, fb.y, '-'+dmg, '#e85b21', 1.1);
+        }
         shake = Math.max(shake, 8); sfx.reach();
-        floatText(MOUNTAIN_X + 20, fb.y, '-'+dmg, '#e85b21', 1.1);
         emitFireParticles(fb.x, fb.y, 14, 1);
         fireballs.splice(fireballs.indexOf(fb), 1);
         if(hp <= 0){ gameOver(); return; }
@@ -1343,6 +1560,46 @@ function curSpawnEvery(){
   return boss2Spawned ? base * S.postVisorSpawnMul : base;
 }
 
+// один воздушный вихрь (клик по нему → торнадо). Плывёт влево из-за правого края.
+function spawnSwirl(){
+  const s = { x: W + 30, y: rnd(80, 190), spd: -rnd(45, 80) };
+  swirls.push(s);
+  floatText(W - 70, s.y, 'ВЕТЕР — КЛИКНИ!', '#1f7a7a', 1.8);
+}
+
+// пачка мобов разом — плотной волной из-за правого края. Только small/dog: к 40-й сек
+// они давно знакомы, так что пачка не зацепит туториал дебюта нового типа.
+function spawnBatch(n){
+  const pool = ['small', 'small', 'dog'];
+  for(let i = 0; i < n; i++){
+    const t = pool[(Math.random()*pool.length)|0];
+    const d = spawnDemon(t);
+    d.x = W + 20 + i * 26 + rnd(-6, 6);
+    if(!TYPES[t].air) d.y = GROUND_Y - sizeOf(d);
+  }
+}
+
+// окно вокруг срежиссированной молнии, когда торнадо не появляются (±noTornadoPad сек)
+function noTornadoWindow(){
+  const I = CFG.intro;
+  return gameTime >= I.lightningAt - I.noTornadoPad && gameTime <= I.lightningAt + I.noTornadoPad;
+}
+
+// срежиссированное начало: пачки мобов, первый вихрь, первая гроза (одноразово, по времени)
+function updateIntroScript(){
+  const I = CFG.intro;
+  if(!introBatch1Done && gameTime >= I.batch1At){ spawnBatch(I.batch1Count); introBatch1Done = true; }
+  if(!introBatch2Done && gameTime >= I.batch2At){ spawnBatch(I.batch2Count); introBatch2Done = true; }
+  if(!introSwirlDone && gameTime >= I.swirlAt){
+    spawnSwirl(); introSwirlDone = true;
+    nextSwirl = rnd(CFG.tornado.swirlMin, CFG.tornado.swirlMax) / (1 + CFG.skills.windcaller.mult * sk('windcaller'));
+  }
+  if(!introLightningDone && gameTime >= I.lightningAt){
+    chargeCloud(); introLightningDone = true;
+    nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax) / (1 + CFG.skills.stormcaller.mult * sk('stormcaller'));
+  }
+}
+
 // ── прокачка ───────────────────────────────────────────────────────
 // урон по вратам с учётом скилла «Каменная кладка»
 function mountainDmg(base){
@@ -1428,12 +1685,14 @@ function openSkillChoice(){
     };
     btn.addEventListener('mousedown', start);
     btn.addEventListener('mouseup', cancel);
-    btn.addEventListener('mouseleave', cancel);
+    btn.addEventListener('mouseleave', () => { cancel(); perkHover = false; }); // ушёл с карточки
+    btn.addEventListener('mouseenter', () => { perkHover = true; });            // курсор-«указатель»
     btn.addEventListener('touchstart', start, { passive:false });
     btn.addEventListener('touchend', cancel);
     btn.addEventListener('touchcancel', cancel);
     skillCards.appendChild(btn);
   }
+  perkHover = false; // на открытии выбора курсор нейтральный, пока не навели на карточку
   lvlOverlay.classList.remove('hidden');
 }
 
@@ -1444,6 +1703,7 @@ function pickSkill(id){
   perkPool = perkPool.filter(pid => !offered.has(pid));
   currentOfferIds = [];
   pendingLevels--;
+  perkHover = false;
   lvlOverlay.classList.add('hidden');
   if(pendingLevels > 0){ openSkillChoice(); return; }
   choosing = false;
@@ -1519,6 +1779,7 @@ function updateTornadoes(dt){
       if(d.vy > up * 0.5) d.vy = up;
       if(!d.rotV) d.rotV = rnd(-8, 8);
       d.armed = true; d.noEyeDmg = true; d.hitsLeft = sk('collide'); d.noDmg = false; d.grounded = false;
+      d.windTossed = true; // заброшенный ураганом за стену не нанесёт урон вратам
       if(dmgNow){ hurt(d, CFG.skills.cyclone.dmg, 300); }
       if(demons.includes(d)){ caught.push(d); if(burning(d)) anyBurning = true; }
     }
@@ -1753,7 +2014,12 @@ function onDown(e){
   // чтобы случайным нажатием его не пропустить. 'grab'-туторы при этом ещё и хватают
   // цель; у «города» объекта нет — там закрывает любой клик.
   if(tutorialMsgActive()){
-    if(!tutorialMsgLocked()){
+    if(tutorialMsgKey() === 'cyclops' || tutorialMsgKey() === 'visor'){
+      // циклоп (и босс в забрале): через skipLock(0.5)с — клик по ГЛАЗУ; через cyclopsAnyClickAt(1.5)с — любой клик
+      const mt = tutorialMsgTime();
+      if(mt >= (CFG.tutorial.cyclopsAnyClickAt ?? 1.5)) dismissTutorialMessage();
+      else if(mt >= (CFG.tutorial.skipLock ?? 0) && cyclopsEyeHit(p)) dismissTutorialMessage();
+    } else if(!tutorialMsgLocked()){
       if(tutorialMsgDismiss() === 'grab') tutorialGrab(p);          // схватить цель → пройдено
       else if(!tutorialHasObject()) dismissTutorialMessage();        // нет объекта (город) — любой клик
       else if(tutorialHitObject(p)) dismissTutorialMessage();        // клик по подсвеченному объекту
@@ -2029,6 +2295,7 @@ function loop(ts){
   const active = gameplayActive();
   if(active) updateClouds(dt); // облака — часть игрового мира, на паузе стоят
   updateSmoke(dt);  // дым из труб домиков — тоже всегда
+  updateBrzFire(dt);// огонь жаровен (пиксели) — анимируется всегда
   updateDust(dt);   // пылинки парят всегда
   updateCursor(dt); // курсор анимируется всегда, чтобы успеть «сжаться» при хватании
   updateDialogue(dt); // печать реплики во времени (если идёт диалог)
@@ -2038,11 +2305,24 @@ function loop(ts){
   else shake = 0; // мир на паузе/стопе — всегда гасим тряску камеры (см. CLAUDE.md)
   draw();
   drawDust(); // пылинки стартового экрана — на своём холсте поверх письма
+  // ВРЕМЕННЫЙ дебаг-таймер + кнопка паузы: видны только в бою.
+  // gameTime растёт лишь когда мир не на паузе, поэтому таймер сам замирает на паузе.
+  if(running){
+    debugTimerEl.classList.remove('hidden');
+    pauseBtn.classList.remove('hidden');
+    godGateBtn.classList.remove('hidden');
+    const m = Math.floor(gameTime/60), s = Math.floor(gameTime%60);
+    debugTimerEl.textContent = m + ':' + String(s).padStart(2, '0');
+  } else if(!debugTimerEl.classList.contains('hidden')){
+    debugTimerEl.classList.add('hidden');
+    pauseBtn.classList.add('hidden');
+    godGateBtn.classList.add('hidden');
+  }
   requestAnimationFrame(loop);
 }
 
 function gameplayActive(){
-  return running && !choosing && !settingsOpen && !tutorialFrozen() && !dialogueActive();
+  return running && !choosing && !settingsOpen && !paused && !tutorialFrozen() && !dialogueActive();
 }
 
 // туториальный моб (которого игрок схватил в обучении) и флаг ещё-не-показанного
@@ -2075,7 +2355,7 @@ function update(dt){
     braziersLit = true;
     for(const bz of BRAZIERS) emitFireParticles(bz.x, bz.y, 14, 1);
     shake = Math.max(shake, 6);
-    if(tutorialTryMessage('brazier', CFG.tutorial.brazierTitle, CFG.tutorial.brazierSub, 'click')) msgHi = null;
+    if(tutorialTryMessage('brazier', CFG.tutorial.brazierTitle, CFG.tutorial.brazierSub, 'click')) msgHi = { braziers: true };
     if(pendingLevels > 0 && !choosing && running) openSkillChoice();
   }
   // внутренний уровень угрозы для сессионного лога
@@ -2086,11 +2366,16 @@ function update(dt){
   // обычный поток мобов: идёт в обычной игре и в бесконечном режиме, но НЕ во время
   // финальных сцен (пауза-катарсис, орда, молнии — там спавном рулит финал)
   if(!finale || finale === 'endless'){
+    updateIntroScript(); // срежиссированные пачки/вихрь/гроза в начале партии
     spawnTimer -= dt;
     if(spawnTimer <= 0){
       const type = pickStreamType();
       if(type){
-        spawnDemon(type);
+        // туторные мобы (первый в партии и дебюты с подсказкой) выходят сразу на экране,
+        // чтобы стрелка/подсветка указывала на видимого моба; прочие — из-за края экрана
+        const tutorMob = firstSpawnPending || (lastPickedDebut && TUTORIAL_DEBUT_TYPES.has(type));
+        spawnDemon(type, tutorMob);
+        firstSpawnPending = false;
         spawnTimer = lastPickedDebut && TUTORIAL_DEBUT_TYPES.has(type)
           ? CFG.stream.tutorialIntroPause
           : curSpawnEvery() * rnd(.8, 1.2);
@@ -2284,8 +2569,15 @@ function update(dt){
       d.y += d.vy * dt;
       d.rot += d.rotV * dt * 4;
       const M = CFG.offscreen.margin;
-      // улетел далеко за край — получает урон и, если выжил, возвращается справа позже
-      if(d.x + s < -M){ sendOffscreen(d); continue; }
+      // улетел за ЛЕВЫЙ край — попал в город за вратами. Если занесло ураганом
+      // (windTossed) — не вина игрока: без урона, моб вернётся в поток. Иначе его
+      // «доставили» за врата: урон вратам + (в первый раз) обучающее предупреждение.
+      if(d.x + s < -M){
+        if(d.windTossed) sendOffscreen(d);
+        else cityBreach(d);
+        continue;
+      }
+      // улетел за ПРАВЫЙ край — выброшен прочь: получает урон, потом вернётся справа
       if(d.x > W + M){
         sendOffscreen(d);
         continue;
@@ -2380,6 +2672,9 @@ function update(dt){
 
       if(d.y + s >= GROUND_Y){
         d.y = GROUND_Y - s;
+        // приземлился справа от врат — снова обычный моб (метка подброса ураганом снимается);
+        // если упал ЗА врата (слева) — метка остаётся, и врата не получат урон
+        if(d.x + s/2 >= MOUNTAIN_X) d.windTossed = false;
         sfx.slap(Math.hypot(d.vx, d.vy)); // удар мобом о землю — по скорости падения
         if(d.noDmg){
           // вывалился из рук — падение без урона
@@ -2424,14 +2719,15 @@ function update(dt){
     heldBoulder.x += (mouse.x - heldBoulder.x) * Math.min(1, dt*22);
     heldBoulder.y += (mouse.y - heldBoulder.y) * Math.min(1, dt*22);
   }
-  // ── воздушные завихрения: появляются периодически, плывут влево, кликом → торнадо ──
-  nextSwirl -= dt;
-  if(nextSwirl <= 0){
-    const s = { x: W + 30, y: rnd(80, 190), spd: -rnd(45, 80) };
-    swirls.push(s);
-    floatText(W - 70, s.y, 'ВЕТЕР — КЛИКНИ!', '#1f7a7a', 1.8);
-    // «Эолова длань»: вихри появляются чаще
-    nextSwirl = rnd(CFG.tornado.swirlMin, CFG.tornado.swirlMax) / (1 + CFG.skills.windcaller.mult * sk('windcaller'));
+  // ── воздушные завихрения: стандартно — после срежиссированного первого вихря и
+  // ВНЕ окна без торнадо вокруг молнии (см. updateIntroScript / noTornadoWindow) ──
+  if(introSwirlDone && !noTornadoWindow()){
+    nextSwirl -= dt;
+    if(nextSwirl <= 0){
+      spawnSwirl();
+      // «Эолова длань»: вихри появляются чаще
+      nextSwirl = rnd(CFG.tornado.swirlMin, CFG.tornado.swirlMax) / (1 + CFG.skills.windcaller.mult * sk('windcaller'));
+    }
   }
   for(const s of [...swirls]){
     s.x += s.spd * dt;
@@ -2513,11 +2809,13 @@ function update(dt){
   for(const sh of [...shots]){
     sh.x += sh.vx * dt;
     if(sh.x <= MOUNTAIN_X){
-      const dmg = mountainDmg(sh.dmg);
-      stats.gateShots++;
-      hp = Math.max(0, hp - dmg); hpFill.style.width = hp + '%';
+      if(!gateImmune()){
+        const dmg = mountainDmg(sh.dmg);
+        stats.gateShots++;
+        hp = Math.max(0, hp - dmg); hpFill.style.width = hp + '%';
+        floatText(MOUNTAIN_X+20, sh.y, '-'+dmg, '#c0392b', 1);
+      }
       shake = Math.max(shake, 6); sfx.reach();
-      floatText(MOUNTAIN_X+20, sh.y, '-'+dmg, '#c0392b', 1);
       shots.splice(shots.indexOf(sh), 1);
       if(hp <= 0){ gameOver(); }
       continue;
@@ -2542,11 +2840,13 @@ function update(dt){
       c.poundT -= dt;
       if(c.poundT <= 0){
         c.poundT = CFG.cyclops.poundEvery;
-        const pd = mountainDmg(CFG.cyclops.mtnDmg);
-        hp = Math.max(0, hp - pd);
-        hpFill.style.width = hp + '%';
+        if(!gateImmune()){
+          const pd = mountainDmg(CFG.cyclops.mtnDmg);
+          hp = Math.max(0, hp - pd);
+          hpFill.style.width = hp + '%';
+          floatText(MOUNTAIN_X+40, GROUND_Y-170, '-'+pd, '#c0392b', 1.2);
+        }
         shake = CFG.cyclops.shakePound; sfx.reach();
-        floatText(MOUNTAIN_X+40, GROUND_Y-170, '-'+pd, '#c0392b', 1.2);
         for(let i=0;i<14;i++){
           particles.push({x:MOUNTAIN_X+rnd(-30,60), y:rnd(180,GROUND_Y-40), vx:rnd(-60,220), vy:rnd(-220,-40),
             col:'#7a4a32', life:rnd(.4,.9), size:rnd(2,5)});
@@ -2630,8 +2930,7 @@ function draw(){
   } else {
     drawMountain();
   }
-  drawBrazier();
-  drawSmoke(); // дымок из труб домиков поднимается на фоне башни
+  drawSmoke(); // дымок из труб домиков поднимается на фоне башни (огонь жаровен — позже, поверх мобов)
 
   // — флаг: флагшток (жёсткий) + полотно (колышется) — координаты в FLAG вверху файла
   if(art.flagstock){
@@ -2723,7 +3022,7 @@ function draw(){
       cx.globalAlpha = 1;
     }
     cx.restore();
-    if(burning(c)) drawEntityFire(c.x, c.y, CYC_W, CYC_H, 1.4);
+    // огонь горящего циклопа — пиксельными частицами (см. updateBrzFire), рисуется позже поверх всех
     // деревянное забрало 2-го босса — закрывает глаз, пока цело
     if(c.visor > 0) drawVisor(c);
     // полоска ХП
@@ -2769,8 +3068,8 @@ function draw(){
     cx.translate(d.x + s/2, d.y + s/2);
     cx.rotate(d.rot);
     if(d.flip) cx.scale(-1,1);
-    if(d.type==='bomber') drawBomber(s, last*0.001, d.x); // сам — ходячая бомба
-    else cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s);
+    cx.drawImage(SPRITES[d.type][d.pal], -s/2, -s/2, s, s);
+    // у бомбера огонь на фитиле — частицы как у жаровни (см. updateBrzFire), здесь не рисуем
     if(d.type==='caster') drawCasterBow(s, d.flip);
     // вспышка при уроне
     if(d.flash > 0){
@@ -2782,11 +3081,11 @@ function draw(){
       cx.globalAlpha = 1;
     }
     cx.restore();
-    if(burning(d)) drawEntityFire(d.x, d.y, s, s, 1);
-    // носильщик ещё несёт валун — рисуем его над мобом
+    // огонь горящего моба — пиксельными частицами (см. updateBrzFire), рисуется позже поверх всех
+    // носильщик ещё несёт валун — рисуем его над мобом, с тёмной обводкой
     if(d.type==='roller' && d.hasBoulder){
       const br = CFG.spells.boulder.r;
-      cx.drawImage(SPELL_SPRITES.boulder, d.x+s/2-br*0.8, d.y-br*1.1, br*1.6, br*1.6);
+      drawBoulderOutlined(d.x+s/2-br*0.8, d.y-br*1.1, br*1.6, br*1.6);
     }
     // полоска ХП крупного моба — показываем, только если он уже ранен
     const mhp = TYPES[d.type].hp;
@@ -2803,6 +3102,9 @@ function draw(){
       cx.fillText('*', d.x+s/2+8, d.y-8);
     }
   }
+
+  // пиксельный огонь — поверх монстров: жаровни, фитили бомберов, горящие мобы/циклопы
+  drawBrzFire();
 
   // молнии — ломаный разряд с ветвлением и свечением
   for(const b of bolts) drawLightning(b);
@@ -2920,6 +3222,12 @@ const CURSOR_HELD = 12;           // кадр удержания
 const CURSOR_POINTER = 5;         // кадр-указатель над интерактивом
 let cursorState = { phase: 'idle', i: 0, t: 0 };
 let cursorEl = null;
+let perkHover = false; // курсор над карточкой перка → показываем кадр-«указатель»
+let btnHover = false;  // курсор над любой HTML-кнопкой → тоже кадр-«указатель»
+// делегирование: при наведении на кнопку (в меню, оверлеях, HUD) включаем «указатель»
+document.addEventListener('mouseover', e => {
+  btnHover = !!(e.target.closest && e.target.closest('button'));
+});
 
 function ensureCursorEl(){
   if(cursorEl) return cursorEl;
@@ -2972,7 +3280,8 @@ function updateCursor(dt){
     updateCursorElement();
     return;
   }
-  cursorState.phase = cursorOverInteractive() ? 'pointer' : 'idle';
+  // указатель — над тучей/вихрем ИЛИ над карточкой перка на экране выбора
+  cursorState.phase = (cursorOverInteractive() || perkHover || btnHover) ? 'pointer' : 'idle';
   cursorState.i = 0; cursorState.t = 0;
   updateCursorElement();
 }
@@ -3185,30 +3494,6 @@ function drawMountain(){
   cx.fillRect(-20,140, 40, GROUND_Y-130);
 }
 
-function drawBrazier(){
-  if(!braziersLit) return; // жаровни загораются только на 2-й минуте
-  const t = last * 0.001;
-  const fw = FIRE.brazierW;
-  cx.save();
-  cx.globalCompositeOperation = 'lighter';
-  // два одинаковых огонька в золотых навершиях (горят синхронно, без чаши)
-  for(const bz of BRAZIERS){
-    for(let i = 0; i < 3; i++){
-      const phase = t*7 + i*2.1;
-      const fx = bz.x + (i-1)*4 + Math.sin(phase)*1.5;
-      const h = 13 + Math.sin(phase*1.3)*4;
-      cx.fillStyle = FIRE.colors[i % FIRE.colors.length];
-      cx.beginPath();
-      cx.moveTo(fx, bz.y - h);
-      cx.lineTo(fx - fw, bz.y);
-      cx.lineTo(fx + fw, bz.y);
-      cx.closePath();
-      cx.fill();
-    }
-  }
-  cx.globalCompositeOperation = 'source-over';
-  cx.restore();
-}
 
 // деревянное забрало 2-го босса — доски с железными скобами поверх глаза
 function drawVisor(c){
@@ -3337,122 +3622,51 @@ function drawFireballs(){
   cx.restore();
 }
 
-function drawEntityFire(x, y, w, h, scale){
-  const t = last * 0.001;
-  cx.save();
-  cx.globalCompositeOperation = 'lighter';
-  const n = Math.max(2, Math.round(3 * scale));
-  for(let i = 0; i < n; i++){
-    const phase = t*9 + i*1.7 + x*0.03;
-    const fx = x + w*(0.25 + 0.5*((i+0.5)/n)) + Math.sin(phase)*w*0.08;
-    const fy = y + h*(0.18 + 0.25*Math.abs(Math.sin(phase*.7)));
-    const fh = (10 + 7*Math.sin(phase*1.2 + 1)) * scale;
-    const fw = (5 + 2*Math.cos(phase)) * scale;
-    cx.fillStyle = FIRE.colors[i % FIRE.colors.length];
-    cx.globalAlpha = 0.55 + 0.25*Math.sin(phase);
-    cx.beginPath();
-    cx.moveTo(fx, fy - fh);
-    cx.lineTo(fx - fw, fy);
-    cx.lineTo(fx + fw, fy);
-    cx.closePath();
-    cx.fill();
-  }
-  cx.globalAlpha = 1;
-  cx.globalCompositeOperation = 'source-over';
-  cx.restore();
-}
-
-// Бомбер — не демон с бомбой, а сама ходячая бомба: чёрный шар на ножках,
-// со злыми глазами, раскалёнными трещинами и шипящим фитилём.
-// Рисуется в локальных координатах с центром (0,0); вызывается уже внутри
-// translate/rotate/flip из основного цикла отрисовки демонов.
+// Лук кастера — пиксельный (квадратиками), как остальные мобы. Рисуется в локальных
+// координатах с центром (0,0); вызывается уже внутри translate/rotate/flip.
+// Дуга — ряд пиксельных квадратиков, выгнутых наружу (от тела); тетива — прямой
+// ряд тонких квадратиков по внутренней стороне между концами дуги.
 function drawCasterBow(s, flipped){
   const dir = flipped ? 1 : -1;
-  const x = dir*s*0.34, y = -s*0.08;
-  const h = s*0.55;
-  cx.save();
-  cx.strokeStyle = '#5a3218';
-  cx.lineWidth = Math.max(2, s*0.055);
-  cx.lineCap = 'round';
-  cx.beginPath();
-  cx.moveTo(x, y - h*0.5);
-  cx.quadraticCurveTo(x + dir*s*0.22, y, x, y + h*0.5);
-  cx.stroke();
-  cx.strokeStyle = '#e0d0a2';
-  cx.lineWidth = Math.max(1, s*0.025);
-  cx.beginPath();
-  cx.moveTo(x, y - h*0.5);
-  cx.lineTo(x - dir*s*0.12, y);
-  cx.lineTo(x, y + h*0.5);
-  cx.stroke();
-  cx.restore();
+  const p = Math.max(2, Math.round(s*0.09));   // размер «пикселя» лука
+  const cxp = dir*s*0.34, cyp = -s*0.08;        // центр лука сбоку от тела
+  const half = s*0.3;                            // половина высоты дуги
+  const n = Math.max(6, Math.round(half*2 / (p*0.8))); // частые сегменты — без разрывов
+  // дуга — тёмное дерево, середина выгнута наружу (в сторону dir)
+  cx.fillStyle = '#5a3218';
+  for(let i=0;i<=n;i++){
+    const tt = i/n;                              // 0..1 сверху вниз
+    const yy = cyp - half + tt*half*2;
+    const bow = Math.sin(tt*Math.PI)*s*0.16;     // выгиб наружу в середине
+    const xx = cxp + dir*bow;
+    cx.fillRect(Math.round(xx - p/2), Math.round(yy - p/2), p, p);
+  }
+  // тетива — тонкий прямой ряд между концами дуги (по внутренней стороне)
+  const sp = Math.max(1, Math.round(p*0.5));
+  cx.fillStyle = '#e0d0a2';
+  for(let i=0;i<=n;i++){
+    const yy = cyp - half + (i/n)*half*2;
+    cx.fillRect(Math.round(cxp - sp/2), Math.round(yy - sp/2), sp, sp);
+  }
 }
 
-function drawBomber(s, t, phase){
-  const R = s * 0.34;            // радиус тела-бомбы
-  const cy = -s * 0.04;          // центр тела — чуть выше середины спрайта
-  const groundY = s * 0.46;      // низ спрайта — туда упираются ножки
-  const swing = Math.sin(t*7 + phase*0.05); // фаза шага (своя у каждого моба)
-
-  // ── ножки (под телом, чтобы тело перекрывало бёдра) ──
-  cx.strokeStyle = '#1a1014'; cx.lineWidth = Math.max(2, s*0.07); cx.lineCap = 'round';
-  for(const dir of [-1, 1]){
-    const hipX = dir * R*0.45, hipY = cy + R*0.8;
-    const step = swing * dir;                       // ноги в противофазе
-    const footX = hipX + step * R*0.5;
-    const footY = groundY - Math.max(0, step)*R*0.25; // на шаге ступня чуть приподнята
-    cx.beginPath(); cx.moveTo(hipX, hipY); cx.lineTo(footX, footY); cx.stroke();
-    cx.beginPath(); cx.moveTo(footX, footY); cx.lineTo(footX + dir*R*0.3, footY); cx.stroke(); // ступня
+// Валун с тёмной обводкой (для того, что несёт roller — чтобы был контрастнее).
+// Обводка: тёмный силуэт того же спрайта (цвет панели победы #2e2316), смещённый
+// на o пикселей в 8 сторон, поверх — сам валун. Силуэт кэшируется.
+let _boulderOutline = null;
+function drawBoulderOutlined(x, y, w, h){
+  const spr = SPELL_SPRITES.boulder;
+  if(!_boulderOutline) _boulderOutline = tint(spr, '#2e2316');
+  const o = Math.max(1, Math.round(w * 0.09));   // толщина обводки ~9% ширины
+  for(const [ox, oy] of [[-o,0],[o,0],[0,-o],[0,o],[-o,-o],[o,-o],[-o,o],[o,o]]){
+    cx.drawImage(_boulderOutline, x+ox, y+oy, w, h);
   }
-  cx.lineCap = 'butt';
-
-  // ── тело-бомба ──
-  cx.fillStyle = '#0c0a10';
-  cx.beginPath(); cx.arc(0, cy, R, 0, Math.PI*2); cx.fill();
-  cx.fillStyle = 'rgba(255,255,255,0.20)';        // блик
-  cx.beginPath(); cx.arc(-R*0.36, cy - R*0.36, R*0.3, 0, Math.PI*2); cx.fill();
-
-  // ── раскалённые трещины внутри ──
-  cx.globalCompositeOperation = 'lighter';
-  cx.strokeStyle = '#ff6a1a'; cx.lineWidth = Math.max(1, s*0.035); cx.lineCap = 'round';
-  cx.beginPath();
-  cx.moveTo(-R*0.12, cy + R*0.32); cx.lineTo(R*0.04, cy + R*0.02); cx.lineTo(R*0.3, cy + R*0.2);
-  cx.stroke();
-  cx.lineCap = 'butt';
-  cx.globalCompositeOperation = 'source-over';
-
-  // ── злые глаза ──
-  for(const dir of [-1, 1]){
-    cx.fillStyle = '#ffcf3a';
-    cx.beginPath(); cx.arc(dir*R*0.36, cy - R*0.12, R*0.2, 0, Math.PI*2); cx.fill();
-    cx.fillStyle = '#0a0608';                      // зрачок
-    cx.beginPath(); cx.arc(dir*R*0.4, cy - R*0.08, R*0.09, 0, Math.PI*2); cx.fill();
-  }
-
-  // ── горловина-колпачок ──
-  const capY = cy - R - s*0.04;
-  cx.fillStyle = '#2a1e12';
-  cx.fillRect(-R*0.3, capY, R*0.6, s*0.06);
-
-  // ── фитиль с искрой ──
-  const tipX = R*0.2, tipY = capY - s*0.18;
-  cx.strokeStyle = '#8a6a38'; cx.lineWidth = Math.max(2, s*0.05); cx.lineCap = 'round';
-  cx.beginPath();
-  cx.moveTo(0, capY);
-  cx.quadraticCurveTo(R*0.55, capY - s*0.08, tipX, tipY);
-  cx.stroke();
-  cx.lineCap = 'butt';
-  const sp = 2 + Math.abs(Math.sin(t*20 + phase))*2;
-  cx.globalCompositeOperation = 'lighter';
-  cx.fillStyle = FIRE.colors[2];
-  cx.beginPath(); cx.arc(tipX, tipY, sp+1.5, 0, Math.PI*2); cx.fill();
-  cx.fillStyle = FIRE.colors[0];
-  cx.beginPath(); cx.arc(tipX, tipY, sp*0.5, 0, Math.PI*2); cx.fill();
-  cx.globalCompositeOperation = 'source-over';
+  cx.drawImage(spr, x, y, w, h);
 }
 
 // ── HUD / overlay ──────────────────────────────────────────────────
 const scoreEl = document.getElementById('score');
+const debugTimerEl = document.getElementById('debugTimer'); // ВРЕМЕННЫЙ дебаг-таймер боя
 const hpFill = document.getElementById('hpfill');
 const lvlEl = document.getElementById('lvl');
 const xpFill = document.getElementById('xpfill');
@@ -3512,6 +3726,7 @@ applyAudioSettings();
 refreshSettingsUI();
 
 let settingsOpen = false;
+let paused = false; // пауза по кнопке у таймера — замораживает бой (см. gameplayActive)
 function openSettings(){
   if(settingsOpen) return;
   settingsOpen = true; shake = 0;
@@ -3524,6 +3739,29 @@ function closeSettings(){
   mouse.px = mouse.x; mouse.py = mouse.y; mouse.vx = mouse.vy = 0; // без фантомного рывка после паузы
 }
 settingsBtn.addEventListener('click', () => { sfx.tap(); openSettings(); settingsBtn.blur(); });
+// кнопка паузы (рядом с дебаг-таймером): замораживает бой через флаг paused
+const pauseBtn = document.getElementById('pauseBtn');
+function togglePause(){
+  paused = !paused;
+  pauseBtn.textContent = paused ? '▶' : '⏸';
+  pauseBtn.title = paused ? 'Продолжить' : 'Пауза';
+  if(!paused){ mouse.px = mouse.x; mouse.py = mouse.y; mouse.vx = mouse.vy = 0; } // без рывка после паузы
+  pauseBtn.blur();
+}
+pauseBtn.addEventListener('click', () => { sfx.tap(); togglePause(); });
+// ВРЕМЕННО: дебаг-кнопка «неуязвимый замок» (рядом с паузой). По умолчанию выкл.
+const godGateBtn = document.getElementById('godGateBtn');
+function refreshGodGateBtn(){
+  godGateBtn.textContent = '🛡 Замок: ' + (debugGodGate ? 'неуязвим' : 'уязвим');
+  godGateBtn.classList.toggle('on', debugGodGate);
+}
+godGateBtn.addEventListener('click', () => {
+  sfx.tap();
+  debugGodGate = !debugGodGate;
+  refreshGodGateBtn();
+  godGateBtn.blur();
+});
+refreshGodGateBtn();
 // ВРЕМЕННО: дебаг-кнопка финала (потом убрать вместе с #debugFinaleBtn и debugStartFinale)
 document.getElementById('debugFinaleBtn').addEventListener('click', (e) => { debugStartFinale(); e.currentTarget.blur(); });
 settingsClose.addEventListener('click', () => { sfx.tap(); closeSettings(); });
@@ -3561,9 +3799,11 @@ function start({ skipTutorial = false, skipDialogue = false } = {}){
   for(const c of clouds){ c.charge = null; }
   nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
   score=0; hp=100; held=null;
+  paused=false; pauseBtn.textContent='⏸'; pauseBtn.title='Пауза'; // снять паузу при старте
   gameTime=0; spawnTimer=0.6; cyclopsTimer=CFG.stream.cyclopsFirst; threat=1;
   hugeSeen=false;
-  seenTypes = new Set(); lastDebutAt = -999; lastPickedDebut = false;
+  seenTypes = new Set(); lastDebutAt = -999; lastPickedDebut = false; firstSpawnPending = true;
+  introBatch1Done = false; introBatch2Done = false; introSwirlDone = false; introLightningDone = false;
   player = { level: 0, xp: 0, xpNeed: CFG.leveling.baseXP, skills: {} };
   pendingLevels = 0; choosing = false; currentOfferIds = [];
   perkPool = [...CFG.leveling.perks].sort(() => Math.random() - .5); // тасуем перки на забег
