@@ -104,12 +104,30 @@ function chargeCloud(){
 }
 
 // клик по грозовой туче: бьёт молнией строго вниз
+// ближайшие НАЗЕМНЫЕ цели к точке (sx) по горизонтали в радиусе r (летающих не берём),
+// отсортированы по дистанции; не больше count штук
+function nearestGroundTargets(sx, r, count){
+  const cand = [];
+  for(const d of demons){
+    if(TYPES[d.type].air) continue;  // летающих (bat/wisp) молния не выбирает
+    if(d.state==='held' || d.state==='offscreen' || d.state==='burrow' || d.state==='fly') continue; // только на земле
+    const s = sizeOf(d), cx0 = d.x + s/2;
+    const dx = Math.abs(cx0 - sx);
+    if(dx <= r) cand.push({ x: cx0, y: d.y + s/2, dx });
+  }
+  cand.sort((a, b) => a.dx - b.dx);
+  return cand.slice(0, count);
+}
+
 function triggerCloud(c){
   const cxp = c.x + cloudW(c)/2, cyp = c.y + cloudH(c)*0.6;
   stats.lightning++;
-  const n = 1 + sk('stormBurst');   // «Шквал»: туча бьёт несколькими молниями веером
+  const n = 1 + sk('stormBurst');   // «Шквал»: туча бьёт несколькими молниями
+  const targets = nearestGroundTargets(cxp, CFG.spells.lightning.seekR, n);
   for(let i = 0; i < n; i++){
-    castLightning(cxp + (i - (n-1)/2) * 42, cyp, 0, 1);
+    const t = targets[i];
+    if(t) castLightning(cxp, cyp, t.x - cxp, t.y - cyp);            // навёлся на наземную цель
+    else  castLightning(cxp + (i - (n-1)/2) * 42, cyp, 0, 1);       // нет цели — бьёт вниз (веером)
   }
   c.charge = null;
 }
