@@ -207,15 +207,17 @@ canvas{
   padding:5px 8px;border:2px solid rgba(255,253,245,.5);
 }
 /* кнопки-иконки (настройки слева внизу, пауза справа сверху) — деревянный стиль панели победы */
-#settingsBtn, #pauseBtn{
+#settingsBtn, #pauseBtn, #fsBtn{
   position:absolute;z-index:5;
   font-family:var(--font-body);font-size:20px;line-height:1;
   width:40px;height:40px;padding:0;
   background:#2e2316;color:#f4ead2;
   border:2px solid #5a4226;cursor:pointer;
 }
-#settingsBtn:hover, #pauseBtn:hover{background:#665443;}
+#settingsBtn:hover, #pauseBtn:hover, #fsBtn:hover{background:#665443;}
 #settingsBtn{left:12px;bottom:14px;}
+/* кнопка полного экрана — над кнопкой настроек, слева снизу */
+#fsBtn{left:12px;bottom:62px;}
 /* кнопка зала славы — справа снизу, зеркально шестерёнке настроек */
 #trophyBtn{
   position:absolute;z-index:5;right:12px;bottom:14px;
