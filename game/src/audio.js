@@ -14,6 +14,8 @@
 const SFX_CFG = {
   throw: { names: ['whoosh_1', 'whoosh_2'], vol: 0.55, pitchJitter: 0.12 }, // бросок: случайный вуш + разброс питча
   tap:   { name: 'finger-tap',              vol: 1.0,  pitchJitter: 0.08 }, // нажатие любой кнопки UI
+  lightning: { name: 'lightning', vol: 0.85, pitchJitter: 0.07, trim: 1.0 }, // разряд: стартуем с 1-й секунды файла
+  tornado:   { name: 'wind',      vol: 1.2375, pitchJitter: 0.05, trim: 1.0, fadeOut: 2.0 }, // ветер: старт с 1с + огибающая
   // удар: несколько вариаций сэмпла (разный питч/тембр) — берём случайную, плюс
   // питч ещё подкручивается силой удара. Файлы уже обрезаны от тишины в начале.
   slap:  { names: ['slap_1', 'slap_2', 'slap_3', 'slap_4'],
@@ -98,6 +100,39 @@ function playSample(name, vol = 0.6, rate = 1, jitter = 0, trim = 0){
   return true;
 }
 
+function playFadedSample(name, {
+  vol = 0.6,
+  rate = 1,
+  jitter = 0,
+  fadeIn = 0.4,
+  fadeOut = 0.4,
+  trim = 0,
+  loop = false,
+} = {}){
+  if(muted) return false;
+  const ac = ctx();
+  if(!ac) return false;
+  const buf = buffers[name];
+  if(!buf) return false;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  src.loop = loop;
+  src.playbackRate.value = Math.max(0.05, rate * (1 + (jitter ? rnd(-jitter, jitter) : 0)));
+  const g = ac.createGain();
+  const now = ac.currentTime;
+  const dur = Math.max(0.02, fadeIn);
+  const out = Math.max(0.02, fadeOut);
+  const peak = vol * masterVol;
+  g.gain.setValueAtTime(0.001, now);
+  g.gain.linearRampToValueAtTime(Math.max(0.001, peak), now + dur);
+  g.gain.linearRampToValueAtTime(0.001, now + dur + out);
+  src.connect(g).connect(ac.destination);
+  const off = clamp(trim, 0, Math.max(0, buf.duration - 0.05));
+  src.start(now, off);
+  src.stop(now + dur + out + 0.05);
+  return true;
+}
+
 function beep(freq, dur, type = 'square', vol = 0.08){
   if(muted) return;
   const ac = ctx();
@@ -138,7 +173,26 @@ export const sfx = {
   hurt:  () => { beep(220, .1, 'sawtooth', .1); },
   reach: () => beep(110, .3, 'square', .1),
   thud:  () => beep(200, .06, 'triangle', .06),
-  zap:   () => { beep(1400, .1, 'sawtooth', .07); beep(700, .18, 'square', .06); },
+  zap:   () => {
+    const C = SFX_CFG.lightning;
+    if(!playSample(C.name, C.vol, 1, C.pitchJitter, C.trim)){
+      beep(1400, .1, 'sawtooth', .07); beep(700, .18, 'square', .06);
+    }
+  },
   boom:  () => { beep(120, .25, 'sawtooth', .12); beep(60, .35, 'triangle', .1); },
-  wind:  () => { beep(500, .35, 'sine', .07); beep(320, .45, 'sine', .05); },
+  tornado: (duration = 0.5) => {
+    const C = SFX_CFG.tornado;
+    if(!playFadedSample(C.name, {
+      vol: C.vol,
+      rate: 1,
+      jitter: C.pitchJitter,
+      fadeIn: duration,
+      fadeOut: C.fadeOut,
+      trim: C.trim,
+      loop: true,
+    })){
+      beep(500, .35, 'sine', .07); beep(320, .45, 'sine', .05);
+    }
+  },
+  wind:  (duration) => sfx.tornado(duration),
 };

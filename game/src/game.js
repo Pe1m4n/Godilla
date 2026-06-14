@@ -82,8 +82,9 @@ function updateClouds(dt){
     if(c.x + w < -40) c.x = W + 40;       // уплыло влево — заводим справа
     else if(c.x > W + 40) c.x = -w - 40;
   }
-  // стандартная зарядка туч — только ПОСЛЕ срежиссированной первой грозы (см. updateIntroScript)
-  if(running && !choosing && introLightningDone){
+  // стандартная зарядка туч — только в бою, ПОСЛЕ срежиссированной первой грозы
+  // (см. updateIntroScript) и не в отладочном режиме локации
+  if(running && !choosing && introLightningDone && !debugLocation){
     nextCharge -= dt;
     if(nextCharge <= 0){
       chargeCloud();
@@ -477,6 +478,8 @@ let usedSecondWind = false; // перк «Второе дыхание» — од
 function newStats(){ return { kills:{}, killsTotal:0, lightning:0, tornado:0, gateShots:0, cityBreaches:0 }; }
 let stats = newStats();
 let running = false, held = null;
+let debugLocation = false;
+let debugTildeHits = 0, debugTildeTimer = null;
 const sk = id => player.skills[id] || 0; // уровень скилла игрока
 const enemySlow = () => 1 - CFG.skills.molasses.mult * sk('molasses'); // «Трясина»: множитель скорости врагов
 let mouse = {x:0,y:0,px:0,py:0,vx:0,vy:0};
@@ -934,7 +937,10 @@ function reachMountain(d){
     demons.splice(demons.indexOf(d),1);
     return;
   }
-  const dmgM = mountainDmg(TYPES[d.type].mtnDmg);
+  // моб оказался ЗА стеной (центр левее врат) — его «доставили» в город (не просто
+  // дошёл до стены спереди): двойной урон, как при перелёте за край (cityBreach)
+  const behind = d.x + sizeOf(d)/2 < MOUNTAIN_X;
+  const dmgM = mountainDmg(TYPES[d.type].mtnDmg) * (behind ? 2 : 1);
   hp = Math.max(0, hp - dmgM);
   hpFill.style.width = hp + '%';
   shake = 10;
@@ -943,10 +949,8 @@ function reachMountain(d){
     particles.push({x:d.x, y:d.y+sizeOf(d)/2, vx:rnd(-80,180), vy:rnd(-200,-40),
       col:'#7a4a32', life:rnd(.3,.7), size:rnd(2,4)});
   }
-  // моб оказался ЗА стеной (центр левее врат) — его «доставили» в город, не просто
-  // дошёл до стены спереди: в первый раз показываем обучающее предупреждение
-  if(d.x + sizeOf(d)/2 < MOUNTAIN_X &&
-     tutorialTryMessage('city', CFG.tutorial.cityTitle, CFG.tutorial.citySub, 'click')) msgHi = null;
+  // первый «заброс» за врата — обучающее предупреждение
+  if(behind && tutorialTryMessage('city', CFG.tutorial.cityTitle, CFG.tutorial.citySub, 'click')) msgHi = null;
   demons.splice(demons.indexOf(d),1);
   if (hp <= 0) gameOver();
 }
@@ -1454,6 +1458,8 @@ function updateFinale(dt){
 // общий помощник: погасить игру и показать оверлей
 function stopForOverlay(){
   logSession();
+  debugLocation = false;
+  setDebugPanelVisible(false);
   running = false; held = null; heldBoulder = null; heldFireball = null;
   choosing = false; pendingLevels = 0; shake = 0;
   music.menu();
@@ -1482,6 +1488,8 @@ function toMainScreen(){
   ovWinButtons.classList.add('hidden');
   ovButtons.classList.remove('hidden');
   ovScore.classList.add('hidden');
+  debugLocation = false;
+  setDebugPanelVisible(false);
   finale = null; won = false; running = false;
   startScreen.classList.remove('hidden');
   music.menu();
@@ -1734,8 +1742,9 @@ function spawnVortexStreaks(x, n){
 // всё это время втягивая орду к центру и держа её в воздухе
 function triggerTornado(centerX){
   const T = CFG.tornado;
+  const life = T.duration + CFG.skills.tornadoDur.add * sk('tornadoDur');
   stats.tornado++;
-  sfx.wind();
+  sfx.tornado(life);
   shake = Math.max(shake, 7);
   const cxC = Math.max(MOUNTAIN_X + 20, Math.min(W - 20, centerX));
   tornadoes.push({
@@ -1743,13 +1752,48 @@ function triggerTornado(centerX){
     reach:   T.radius * (1 + CFG.skills.tornadoWide.mult * sk('tornadoWide')), // «Большая воронка»
     liftMul: 1 + CFG.skills.tornadoLift.mult * sk('tornadoLift'),              // «Мощный вихрь»
     pullMul: 1 + CFG.skills.gust.mult * sk('gust'),                            // «Порыв»
-    life: T.duration + CFG.skills.tornadoDur.add * sk('tornadoDur'),          // «Долгая воронка»
+    life,                                                                    // «Долгая воронка»
     dmgT: CFG.skills.cyclone.every,
   });
   spawnVortexStreaks(cxC, 40); // начальный «вдох»
   for(const c of cyclopes){
     c.freeze = Math.max(c.freeze, CFG.spells.wind.stun);
     floatText(c.x+CYC_W/2, c.y-24, 'ЗАМЕР!', '#1a1626', 1);
+  }
+}
+
+function debugSpawnUnit(type){
+  if(!debugLocation || !running || !TYPES[type] || type === 'titan') return;
+  const d = spawnDemon(type);
+  seenTypes.add(type);
+  d.x = W - 90;
+  if(TYPES[type].air){
+    d.airHomeX = d.x; d.airHomeY = d.y;
+  } else {
+    d.y = GROUND_Y - sizeOf(d);
+  }
+  floatText(d.x + sizeOf(d)/2, d.y - 12, type, '#1a1626', 0.8);
+}
+
+function debugCastWind(){
+  if(!debugLocation || !running) return;
+  triggerTornado(Math.min(W - 180, MOUNTAIN_X + 330));
+}
+
+function debugCastLightning(){
+  if(!debugLocation || !running) return;
+  castLightning(MOUNTAIN_X + 360, 72, 0, 1);
+}
+
+function debugSpawnBoss(kind){
+  if(!debugLocation || !running) return;
+  if(kind === 'cyclops'){
+    spawnCyclops();
+  } else if(kind === 'visor'){
+    spawnCyclops({ visor: true });
+  } else if(kind === 'dragon'){
+    dragon = null; fireballs = []; pendingFB = []; heldFireball = null;
+    spawnDragon();
   }
 }
 
@@ -2351,7 +2395,7 @@ function update(dt){
   // непрерывный поток врагов (см. CFG.stream): со временем чаще и злее, без пауз
   gameTime += dt;
   // жаровни на крыше разгораются на 2-й минуте — раньше огня нет (см. CFG.fire.litAt)
-  if(!braziersLit && gameTime >= CFG.fire.litAt){
+  if(!debugLocation && !braziersLit && gameTime >= CFG.fire.litAt){
     braziersLit = true;
     for(const bz of BRAZIERS) emitFireParticles(bz.x, bz.y, 14, 1);
     shake = Math.max(shake, 6);
@@ -2365,7 +2409,7 @@ function update(dt){
   if(finale) updateFinale(dt);
   // обычный поток мобов: идёт в обычной игре и в бесконечном режиме, но НЕ во время
   // финальных сцен (пауза-катарсис, орда, молнии — там спавном рулит финал)
-  if(!finale || finale === 'endless'){
+  if(!debugLocation && (!finale || finale === 'endless')){
     updateIntroScript(); // срежиссированные пачки/вихрь/гроза в начале партии
     spawnTimer -= dt;
     if(spawnTimer <= 0){
@@ -2385,7 +2429,7 @@ function update(dt){
     }
   }
   // боссы выходят последовательно, каждый по одному разу (см. updateBosses)
-  updateBosses(dt);
+  if(!debugLocation) updateBosses(dt);
 
   // первый моб вышел — запускаем обучение и замораживаем мир до его захвата
   if(tutorialOnFirstDemon(demons)) return;
@@ -2719,9 +2763,10 @@ function update(dt){
     heldBoulder.x += (mouse.x - heldBoulder.x) * Math.min(1, dt*22);
     heldBoulder.y += (mouse.y - heldBoulder.y) * Math.min(1, dt*22);
   }
-  // ── воздушные завихрения: стандартно — после срежиссированного первого вихря и
-  // ВНЕ окна без торнадо вокруг молнии (см. updateIntroScript / noTornadoWindow) ──
-  if(introSwirlDone && !noTornadoWindow()){
+  // ── воздушные завихрения: стандартно — после срежиссированного первого вихря,
+  // ВНЕ окна без торнадо вокруг молнии (см. updateIntroScript / noTornadoWindow) и
+  // не в отладочном режиме локации ──
+  if(introSwirlDone && !noTornadoWindow() && !debugLocation){
     nextSwirl -= dt;
     if(nextSwirl <= 0){
       spawnSwirl();
@@ -3680,6 +3725,7 @@ const ovText = document.getElementById('ov-text');
 const ovScore = document.getElementById('ov-score');
 const startBtn = document.getElementById('startBtn');
 const startScreen = document.getElementById('startScreen'); // письмо от матери — только при первом запуске
+const debugPanel = buildDebugPanel();
 // кнопки финала: стандартный набор рестарта vs набор победы (оставить имя / бесконечный)
 const ovButtons = document.getElementById('ov-buttons');
 const ovWinButtons = document.getElementById('ov-win-buttons');
@@ -3687,6 +3733,61 @@ const leaveNameBtn = document.getElementById('leaveNameBtn');
 const endlessBtn = document.getElementById('endlessBtn');
 leaveNameBtn.addEventListener('click', toMainScreen);
 endlessBtn.addEventListener('click', startEndless);
+
+function buildDebugPanel(){
+  const wrap = document.getElementById('wrap');
+  const panel = document.createElement('div');
+  panel.id = 'debugSpawnPanel';
+  panel.className = 'hidden';
+  const title = document.createElement('div');
+  title.className = 'debug-title';
+  title.textContent = 'DEBUG';
+  panel.appendChild(title);
+  const unitNames = {
+    small:'small', dog:'dog', big:'big', bat:'bat', wisp:'wisp',
+    bomber:'bomber', caster:'caster', huge:'huge', mole:'mole', roller:'roller',
+  };
+  for(const type of Object.keys(TYPES)){
+    if(type === 'titan') continue;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = unitNames[type] || type;
+    btn.addEventListener('click', () => debugSpawnUnit(type));
+    panel.appendChild(btn);
+  }
+  const bossTitle = document.createElement('div');
+  bossTitle.className = 'debug-title';
+  bossTitle.textContent = 'BOSS';
+  panel.appendChild(bossTitle);
+  const bosses = [
+    ['циклоп', 'cyclops'],
+    ['забрало', 'visor'],
+    ['дракон', 'dragon'],
+  ];
+  for(const [label, kind] of bosses){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.addEventListener('click', () => debugSpawnBoss(kind));
+    panel.appendChild(btn);
+  }
+  const windBtn = document.createElement('button');
+  windBtn.type = 'button';
+  windBtn.textContent = 'ветер';
+  windBtn.addEventListener('click', () => debugCastWind());
+  panel.appendChild(windBtn);
+  const lightningBtn = document.createElement('button');
+  lightningBtn.type = 'button';
+  lightningBtn.textContent = 'молния';
+  lightningBtn.addEventListener('click', () => debugCastLightning());
+  panel.appendChild(lightningBtn);
+  wrap.appendChild(panel);
+  return panel;
+}
+
+function setDebugPanelVisible(on){
+  if(debugPanel) debugPanel.classList.toggle('hidden', !on);
+}
 
 // кнопка звука (слева внизу)
 // ── настройки (шестерёнка): пауза + мут музыки/звуков отдельно + мастер-громкость ──
@@ -3786,7 +3887,9 @@ sfxBtn.addEventListener('click', () => {
 // Старт партии. Флаги (любой можно выключить независимо):
 //   skipTutorial — обучение выключено на всю партию (тумблер конфига игнорируется)
 //   skipDialogue — вступительный диалог ворона не запускается
-function start({ skipTutorial = false, skipDialogue = false } = {}){
+//   debug — пустая локация с ручными кнопками спавна
+function start({ skipTutorial = false, skipDialogue = false, debug = false } = {}){
+  debugLocation = !!debug;
   demons=[]; puddles=[]; particles=[]; cyclopes=[]; shockwaves=[];
   bolts=[]; boulders=[]; windStreaks=[]; shots=[]; tornadoes=[]; heldBoulder=null; skyFlash=0;
   // боссы, дракон и финал
@@ -3814,6 +3917,7 @@ function start({ skipTutorial = false, skipDialogue = false } = {}){
   msgHi = null; cycTutT = 0;
   scoreEl.textContent='0'; hpFill.style.width='100%';
   updateXPBar();
+  setDebugPanelVisible(debugLocation);
   overlay.classList.add('hidden');
   startScreen.classList.add('hidden'); // письмо больше не показываем — после старта только overlay-геймовер
   lvlOverlay.classList.add('hidden');
@@ -3824,7 +3928,7 @@ function start({ skipTutorial = false, skipDialogue = false } = {}){
   music.startGame();
   // вступительный диалог: пока он идёт, мир заморожен (см. цикл). Кончится —
   // выйдет первый моб и подхватит обучение. Тумблер — DIALOGUE_CFG.enabled.
-  if(!skipDialogue) startDialogue('intro');
+  if(!debugLocation && !skipDialogue) startDialogue('intro');
 }
 // сводка партии → game/sessions.jsonl (dev-эндпоинт из vite.config.js). В сборке тихо падает.
 function logSession(){
@@ -3869,6 +3973,8 @@ function gameOver(){
     return;
   }
   logSession();
+  debugLocation = false;
+  setDebugPanelVisible(false);
   running = false; held = null; heldBoulder = null; heldFireball = null;
   choosing = false; pendingLevels = 0;
   shake = 0; // игра остановилась — гасим тряску, иначе экран дёргается на экране поражения
@@ -3905,6 +4011,31 @@ function startWithFade(opts){
     setTimeout(() => { fade.style.pointerEvents = 'none'; fading = false; }, 350);
   }, 600);
 }
+
+function loadDebugLocation(){
+  if(fading) return;
+  fading = false;
+  fade.style.opacity = '0';
+  fade.style.pointerEvents = 'none';
+  settingsOpen = false;
+  settingsPanel.classList.add('hidden');
+  music.leaveMenu();
+  start({ skipTutorial: true, skipDialogue: true, debug: true });
+  floatText(MOUNTAIN_X + 90, 92, 'DEBUG ЛОКАЦИЯ', '#7a1f1f', 1.2);
+}
+
+window.addEventListener('keydown', (e) => {
+  if(e.code !== 'Backquote') return;
+  debugTildeHits++;
+  if(debugTildeTimer) clearTimeout(debugTildeTimer);
+  debugTildeTimer = setTimeout(() => { debugTildeHits = 0; debugTildeTimer = null; }, 1200);
+  if(debugTildeHits >= 4){
+    debugTildeHits = 0;
+    if(debugTildeTimer){ clearTimeout(debugTildeTimer); debugTildeTimer = null; }
+    loadDebugLocation();
+  }
+});
+
 // звук тапа на ЛЮБОЕ нажатие кнопки UI — один делегированный обработчик (ловит и
 // динамические кнопки: карточки скиллов). Поэтому в обработчиках кнопок ниже tap
 // отдельно не зовём — иначе сыграет дважды.
