@@ -1501,7 +1501,7 @@ function triggerTornado(centerX){
 }
 
 function debugSpawnUnit(type){
-  if(!debugLocation || !running || !TYPES[type]) return;
+  if(!debugLocation || !running || !TYPES[type] || type === 'titan') return;
   const d = spawnDemon(type);
   seenTypes.add(type);
   d.x = W - 90;
@@ -1521,6 +1521,18 @@ function debugCastWind(){
 function debugCastLightning(){
   if(!debugLocation || !running) return;
   castLightning(MOUNTAIN_X + 360, 72, 0, 1);
+}
+
+function debugSpawnBoss(kind){
+  if(!debugLocation || !running) return;
+  if(kind === 'cyclops'){
+    spawnCyclops();
+  } else if(kind === 'visor'){
+    spawnCyclops({ visor: true });
+  } else if(kind === 'dragon'){
+    dragon = null; fireballs = []; pendingFB = []; heldFireball = null;
+    spawnDragon();
+  }
 }
 
 // каждый кадр: пока торнадо живо — крутит струи, втягивает и держит орду в воздухе
@@ -3516,13 +3528,30 @@ function buildDebugPanel(){
   panel.appendChild(title);
   const unitNames = {
     small:'small', dog:'dog', big:'big', bat:'bat', wisp:'wisp',
-    bomber:'bomber', caster:'caster', huge:'huge', mole:'mole', roller:'roller', titan:'titan',
+    bomber:'bomber', caster:'caster', huge:'huge', mole:'mole', roller:'roller',
   };
   for(const type of Object.keys(TYPES)){
+    if(type === 'titan') continue;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = unitNames[type] || type;
     btn.addEventListener('click', () => debugSpawnUnit(type));
+    panel.appendChild(btn);
+  }
+  const bossTitle = document.createElement('div');
+  bossTitle.className = 'debug-title';
+  bossTitle.textContent = 'BOSS';
+  panel.appendChild(bossTitle);
+  const bosses = [
+    ['циклоп', 'cyclops'],
+    ['забрало', 'visor'],
+    ['дракон', 'dragon'],
+  ];
+  for(const [label, kind] of bosses){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.addEventListener('click', () => debugSpawnBoss(kind));
     panel.appendChild(btn);
   }
   const windBtn = document.createElement('button');
