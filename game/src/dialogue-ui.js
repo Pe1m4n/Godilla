@@ -1,5 +1,6 @@
 import { getLines, DIALOGUE_CFG } from './dialogue.js';
 import { art } from './assets.js';
+import { sfx } from './audio.js';
 
 // ────────────────────────────────────────────────────────────────────
 // ОКНО ДИАЛОГА — рантайм и отрисовка (текст реплик лежит в dialogue.js).
@@ -161,8 +162,11 @@ export function updateDialogue(dt){
   if(!active) return;
   const c = DIALOGUE_CFG;
   if(shown < totalChars){
+    const prev = shown;
     shown = Math.min(totalChars, shown + c.charsPerSec * dt);
     syncText();
+    // звук печати: тап со случайным питчем каждые 3 напечатанных символа
+    if(Math.floor(shown / 3) > Math.floor(prev / 3)) sfx.type();
   }
   // подскоки «прыг-прыг» в начале реплики: пускаем crow.hops толчков с паузой hopGap
   if(hopKicksLeft > 0){

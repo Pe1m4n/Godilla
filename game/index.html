@@ -58,7 +58,7 @@
   <button id="pauseBtn" class="hidden" title="Пауза">⏸</button>
   <!-- ВРЕМЕННАЯ дебаг-кнопка: неуязвимость замка вкл/выкл (по умолчанию выкл) -->
   <button id="godGateBtn" class="hidden" title="DEBUG: неуязвимый замок (вкл/выкл)">🛡 Замок: уязвим</button>
-  <button id="settingsBtn" title="Настройки">⚙</button>
+  <button id="settingsBtn" title="Настройки">♫</button>
   <!-- зал славы: открывается в главном меню кнопкой-кубком (зеркально шестерёнке) -->
   <button id="trophyBtn" title="Зал славы" aria-label="Зал славы">
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -73,14 +73,18 @@
   <div id="settingsPanel" class="hidden">
     <div id="settingsBox">
       <h1>Настройки</h1>
-      <label id="volRow">Громкость
-        <input id="masterVol" type="range" min="0" max="100" value="100" aria-label="Мастер-громкость">
-        <span id="volVal">100%</span>
+      <label class="volRow"><span class="volLabel">Общая</span>
+        <input id="masterVol" type="range" min="0" max="100" value="100" aria-label="Общая громкость">
+        <span class="volVal" id="masterVal">100%</span>
       </label>
-      <div id="muteRow">
-        <button id="musicBtn" class="toggle">Музыка: вкл</button>
-        <button id="sfxBtn" class="toggle">Звуки: вкл</button>
-      </div>
+      <label class="volRow"><span class="volLabel">Музыка</span>
+        <input id="musicVol" type="range" min="0" max="100" value="100" aria-label="Громкость музыки">
+        <span class="volVal" id="musicVal">100%</span>
+      </label>
+      <label class="volRow"><span class="volLabel">Звуки</span>
+        <input id="sfxVol" type="range" min="0" max="100" value="100" aria-label="Громкость звуков">
+        <span class="volVal" id="sfxVal">100%</span>
+      </label>
       <button id="settingsClose">Продолжить</button>
     </div>
   </div>

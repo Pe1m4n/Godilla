@@ -2651,9 +2651,12 @@ function update(dt){
         } else if(type){
           // туторные мобы (первый в партии и дебюты с подсказкой) выходят сразу на экране,
           // чтобы стрелка/подсветка указывала на видимого моба; прочие — из-за края экрана
+          const wasFirst = firstSpawnPending;
           const tutorMob = firstSpawnPending || (lastPickedDebut && TUTORIAL_DEBUT_TYPES.has(type));
-          spawnDemon(type, tutorMob);
+          const d0 = spawnDemon(type, tutorMob);
           firstSpawnPending = false;
+          // самый первый (туторный) моб выходит ПАРОЙ — рядом с ним напарник-мелкий
+          if(wasFirst){ const c = spawnDemon('small', true); c.x = d0.x + 70; c.y = GROUND_Y - sizeOf(c); }
           spawnTimer = lastPickedDebut && TUTORIAL_DEBUT_TYPES.has(type)
             ? CFG.stream.tutorialIntroPause
             : curSpawnEvery() * rnd(.8, 1.2);
@@ -4064,34 +4067,29 @@ function setDebugPanelVisible(on){
 const settingsBtn   = document.getElementById('settingsBtn');
 const settingsPanel = document.getElementById('settingsPanel');
 const settingsClose = document.getElementById('settingsClose');
-const masterVolEl   = document.getElementById('masterVol');
-const volVal        = document.getElementById('volVal');
-const musicBtn      = document.getElementById('musicBtn');
-const sfxBtn        = document.getElementById('sfxBtn');
+const masterVolEl = document.getElementById('masterVol'), masterVal = document.getElementById('masterVal');
+const musicVolEl  = document.getElementById('musicVol'),  musicVal  = document.getElementById('musicVal');
+const sfxVolEl    = document.getElementById('sfxVol'),    sfxVal    = document.getElementById('sfxVal');
 
-// сохранённые настройки звука
-let musicMuted = false, sfxMuted = false, masterVolume = 1;
-try {
-  musicMuted = localStorage.getItem('godilla.musicMuted') === '1';
-  sfxMuted   = localStorage.getItem('godilla.sfxMuted') === '1';
-  const v = localStorage.getItem('godilla.masterVol');
-  if(v !== null) masterVolume = Math.max(0, Math.min(1, parseFloat(v) || 0));
-} catch(e){}
+// сохранённые громкости (0..1): общая, музыка, звуки
+const loadVol = (key, def) => {
+  try { const v = localStorage.getItem(key); return v !== null ? Math.max(0, Math.min(1, parseFloat(v) || 0)) : def; }
+  catch(e){ return def; }
+};
+let masterVolume = loadVol('godilla.masterVol', 1);
+let musicVolume  = loadVol('godilla.musicVol', 1);
+let sfxVolume    = loadVol('godilla.sfxVol', 1);
 
 function refreshSettingsUI(){
-  masterVolEl.value = Math.round(masterVolume * 100);
-  volVal.textContent = Math.round(masterVolume * 100) + '%';
-  musicBtn.textContent = 'Музыка: ' + (musicMuted ? 'выкл' : 'вкл');
-  musicBtn.classList.toggle('off', musicMuted);
-  sfxBtn.textContent = 'Звуки: ' + (sfxMuted ? 'выкл' : 'вкл');
-  sfxBtn.classList.toggle('off', sfxMuted);
+  masterVolEl.value = Math.round(masterVolume*100); masterVal.textContent = Math.round(masterVolume*100)+'%';
+  musicVolEl.value  = Math.round(musicVolume*100);  musicVal.textContent  = Math.round(musicVolume*100)+'%';
+  sfxVolEl.value    = Math.round(sfxVolume*100);    sfxVal.textContent    = Math.round(sfxVolume*100)+'%';
 }
-// применить настройки к аудио-системам (музыка + звуки)
+// общая громкость множится на громкость каждой дорожки; мьют теперь — ползунок в 0
 function applyAudioSettings(){
-  music.setVolume(masterVolume);   // мастер-громкость музыки
-  setMasterVolume(masterVolume);   // мастер-громкость звуков
-  music.setMuted(musicMuted);
-  setSfxMuted(sfxMuted);
+  music.setVolume(masterVolume * musicVolume);
+  setMasterVolume(masterVolume * sfxVolume);
+  music.setMuted(false); setSfxMuted(false);
 }
 applyAudioSettings();
 refreshSettingsUI();
@@ -4139,19 +4137,18 @@ settingsClose.addEventListener('click', () => { sfx.tap(); closeSettings(); });
 masterVolEl.addEventListener('input', () => {
   masterVolume = Math.max(0, Math.min(1, masterVolEl.value / 100));
   try { localStorage.setItem('godilla.masterVol', String(masterVolume)); } catch(e){}
-  music.setVolume(masterVolume); setMasterVolume(masterVolume);
-  volVal.textContent = Math.round(masterVolume * 100) + '%';
+  applyAudioSettings(); masterVal.textContent = Math.round(masterVolume*100)+'%';
 });
-musicBtn.addEventListener('click', () => {
-  musicMuted = !musicMuted; sfx.tap();
-  try { localStorage.setItem('godilla.musicMuted', musicMuted ? '1' : '0'); } catch(e){}
-  music.setMuted(musicMuted); refreshSettingsUI();
+musicVolEl.addEventListener('input', () => {
+  musicVolume = Math.max(0, Math.min(1, musicVolEl.value / 100));
+  try { localStorage.setItem('godilla.musicVol', String(musicVolume)); } catch(e){}
+  applyAudioSettings(); musicVal.textContent = Math.round(musicVolume*100)+'%';
 });
-sfxBtn.addEventListener('click', () => {
-  sfxMuted = !sfxMuted;
-  try { localStorage.setItem('godilla.sfxMuted', sfxMuted ? '1' : '0'); } catch(e){}
-  setSfxMuted(sfxMuted); refreshSettingsUI();
-  if(!sfxMuted) sfx.tap(); // звук-подтверждение, если только что включили
+sfxVolEl.addEventListener('input', () => {
+  sfxVolume = Math.max(0, Math.min(1, sfxVolEl.value / 100));
+  try { localStorage.setItem('godilla.sfxVol', String(sfxVolume)); } catch(e){}
+  applyAudioSettings(); sfxVal.textContent = Math.round(sfxVolume*100)+'%';
+  sfx.tap(); // подтверждение громкости звуков
 });
 
 // ── зал славы (лидерборд) ──────────────────────────────────────────
@@ -4320,7 +4317,7 @@ function start({ skipTutorial = false, skipDialogue = false, debug = false } = {
   nextCharge = rnd(CFG.sky.chargeMin, CFG.sky.chargeMax);
   score=0; hp=100; held=null;
   paused=false; pauseBtn.textContent='⏸'; pauseBtn.title='Пауза'; // снять паузу при старте
-  gameTime=0; spawnTimer=0.6; cyclopsTimer=CFG.stream.cyclopsFirst; threat=1;
+  gameTime=0; spawnTimer=0.5; cyclopsTimer=CFG.stream.cyclopsFirst; threat=1;
   hugeSeen=false;
   seenTypes = new Set(); lastDebutAt = -999; lastPickedDebut = false; firstSpawnPending = true;
   introPackDone = false; introSwirlDone = false; introHugeDone = false; introCloudDone = false;

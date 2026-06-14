@@ -14,6 +14,8 @@
 const SFX_CFG = {
   throw: { names: ['whoosh_1', 'whoosh_2'], vol: 0.55, pitchJitter: 0.12 }, // бросок: случайный вуш + разброс питча
   tap:   { name: 'finger-tap',              vol: 1.0,  pitchJitter: 0.08 }, // нажатие любой кнопки UI
+  // печать текста диалога: тот же тап, но тише и со случайным питчем (каждые 3 буквы)
+  type:  { name: 'finger-tap',              vol: 0.42, pitchJitter: 0.04, rateMin: 0.85, rateMax: 1.5 },
   lightning: { name: 'lightning', vol: 0.85, pitchJitter: 0.07, trim: 1.0 }, // разряд: стартуем с 1-й секунды файла
   tornado:   { name: 'wind',      vol: 1.2375, pitchJitter: 0.05, trim: 1.0, fadeOut: 2.0 }, // ветер: старт с 1с + огибающая
   // падение: случайный короткий крик из small/Shreak_*. Для мелких играется как есть,
@@ -308,7 +310,8 @@ function beep(freq, dur, type = 'square', vol = 0.08){
 }
 
 export const sfx = {
-  grab:  () => beep(620, .08, 'square'),
+  // поднятие моба — тот же тап-сэмпл, что и на кнопках (finger-tap), с разбросом питча
+  grab:  () => { const C = SFX_CFG.tap; if(!playSample(C.name, C.vol, 1, C.pitchJitter)) beep(620, .08, 'square'); },
   // бросок: случайный вариант вуша со сдвигом питча; пока сэмпл не готов — старый beep
   throw: () => {
     const C = SFX_CFG.throw;
@@ -333,6 +336,12 @@ export const sfx = {
   tap: () => {
     const C = SFX_CFG.tap;
     if(!playSample(C.name, C.vol, 1, C.pitchJitter)) beep(700, .05, 'square', .08);
+  },
+  // звук печати реплики: тап с разным питчем (зовётся каждые 3 буквы из dialogue-ui)
+  type: () => {
+    const C = SFX_CFG.type;
+    const rate = C.rateMin + Math.random() * (C.rateMax - C.rateMin);
+    if(!playSample(C.name, C.vol, rate, C.pitchJitter)) beep(700, .03, 'square', .04);
   },
   splat: () => {
     const C = SFX_CFG.splat;

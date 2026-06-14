@@ -296,9 +296,12 @@ canvas{
   display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center;
 }
 #settingsBox h1{font-family:var(--font-pixel);font-size:16px;letter-spacing:1px;text-transform:uppercase;margin:0;color:#f4ead2;}
-#volRow{display:flex;align-items:center;gap:10px;font-family:var(--font-pixel);font-size:9px;line-height:1.6;text-transform:uppercase;}
-#volRow #masterVol{width:150px;accent-color:#d4a017;cursor:pointer;}
-#volVal{min-width:52px;text-align:left;}
+/* три ряда громкости: общая / музыка / звуки — ползунки и значения выровнены по правому краю */
+.volRow{display:flex;align-items:center;gap:10px;width:300px;font-family:var(--font-pixel);font-size:9px;line-height:1.6;text-transform:uppercase;}
+/* метка фикс. ширины — ползунки всех строк встают в одну колонку */
+.volRow .volLabel{width:64px;flex:none;text-align:left;}
+.volRow input[type=range]{width:130px;accent-color:#d4a017;cursor:pointer;}
+.volRow .volVal{min-width:46px;text-align:right;margin-left:auto;}
 #muteRow{display:flex;gap:12px;}
 /* тумблеры музыки/звука и «Продолжить» — кнопки тёмного дерева с пиксельной фаской, как в меню */
 .toggle, #settingsClose{
